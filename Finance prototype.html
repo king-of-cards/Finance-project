@@ -1,0 +1,1841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>King of Cards — Procurement & Landing Cost</title>
+<!--
+  KING OF CARDS — Internal Finance & Procurement Dashboard (HTML prototype)
+  Pure HTML / CSS / JS. No frameworks, no backend. Grayscale enterprise UI.
+  Structure:
+    1. Design tokens & base CSS
+    2. Layout (sidebar / header / main)
+    3. Data layer (seeded demo data ~100 POs)
+    4. Calculation engine (landing cost / margins)
+    5. Reusable UI (tables, charts, modals, drawer, toasts)
+    6. Pages (dashboard, PO, entries, approval, vendors, analytics, reports, settings)
+    7. Router + boot
+-->
+<style>
+/* ============================================================= *
+ * 1. DESIGN TOKENS                                               *
+ * ============================================================= */
+:root{
+  --bg:#ffffff;
+  --surface:#ffffff;
+  --panel:#fafafa;
+  --panel-2:#f4f4f5;
+  --border:#e8e8ea;
+  --border-strong:#d8d8dc;
+  --text:#18181b;
+  --text-2:#52525b;
+  --text-3:#8a8a92;
+  --text-inv:#ffffff;
+  --ink:#18181b;         /* primary action */
+  --ink-hover:#000000;
+  --focus:#18181b;
+  --radius:10px;
+  --radius-sm:6px;
+  --radius-lg:14px;
+  --shadow-1:0 1px 2px rgba(24,24,27,.05), 0 1px 1px rgba(24,24,27,.03);
+  --shadow-2:0 4px 16px rgba(24,24,27,.08), 0 1px 3px rgba(24,24,27,.06);
+  --shadow-drawer:-8px 0 32px rgba(24,24,27,.10);
+  --sb-w:236px;
+  --header-h:60px;
+  --font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+
+  /* grayscale status tints (kept monochrome, differentiated by lightness) */
+  --g-1:#f4f4f5; --g-2:#e9e9eb; --g-3:#d4d4d8; --g-4:#a1a1aa; --g-5:#71717a; --g-6:#3f3f46;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--font);
+  background:var(--panel);
+  color:var(--text);
+  font-size:13.5px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+::selection{background:#18181b;color:#fff}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:13px}
+h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.01em}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+
+/* scrollbar */
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:#d4d4d8;border-radius:20px;border:2px solid transparent;background-clip:content-box}
+*::-webkit-scrollbar-thumb:hover{background:#b4b4bb;background-clip:content-box}
+*::-webkit-scrollbar-track{background:transparent}
+
+/* ============================================================= *
+ * 2. LAYOUT                                                     *
+ * ============================================================= */
+.app{display:grid;grid-template-columns:var(--sb-w) 1fr;min-height:100vh}
+
+/* Sidebar */
+.sidebar{
+  position:fixed;inset:0 auto 0 0;width:var(--sb-w);
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;z-index:40;
+}
+.brand{display:flex;align-items:center;gap:11px;padding:18px 20px 16px;border-bottom:1px solid var(--border)}
+.brand .mark{
+  width:34px;height:34px;border-radius:9px;background:var(--ink);color:#fff;
+  display:grid;place-items:center;font-weight:700;font-size:15px;letter-spacing:-.02em;flex:none;
+}
+.brand .name{font-weight:650;font-size:14px;letter-spacing:-.02em;line-height:1.1}
+.brand .sub{font-size:10.5px;color:var(--text-3);letter-spacing:.02em;text-transform:uppercase;font-weight:500}
+.nav{padding:12px 12px;overflow-y:auto;flex:1}
+.nav .group-label{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);padding:12px 10px 6px}
+.nav a{
+  display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:8px;
+  color:var(--text-2);font-weight:500;font-size:13px;margin-bottom:1px;transition:background .12s,color .12s;
+}
+.nav a .ic{width:16px;height:16px;flex:none;opacity:.75}
+.nav a:hover{background:var(--panel);color:var(--text)}
+.nav a.active{background:var(--ink);color:#fff}
+.nav a.active .ic{opacity:1}
+.nav a .badge{margin-left:auto;background:var(--g-2);color:var(--text-2);font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:20px;min-width:20px;text-align:center}
+.nav a.active .badge{background:rgba(255,255,255,.22);color:#fff}
+.sidebar .foot{padding:12px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.sidebar .foot .av{width:30px;height:30px;border-radius:50%;background:var(--g-3);color:var(--text);display:grid;place-items:center;font-weight:600;font-size:12px;flex:none}
+.sidebar .foot .who{line-height:1.2;min-width:0}
+.sidebar .foot .who b{font-size:12.5px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar .foot .who span{font-size:11px;color:var(--text-3)}
+
+/* Main + header */
+.main{grid-column:2;min-width:0;display:flex;flex-direction:column}
+.topbar{
+  position:sticky;top:0;z-index:30;height:var(--header-h);
+  background:rgba(255,255,255,.85);backdrop-filter:saturate(180%) blur(8px);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:14px;padding:0 22px;
+}
+.crumbs{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-3);font-weight:500}
+.crumbs b{color:var(--text);font-weight:600}
+.crumbs .sep{opacity:.5}
+.search{
+  position:relative;margin-left:8px;width:300px;max-width:34vw;
+}
+.search input{
+  width:100%;height:36px;border:1px solid var(--border);border-radius:8px;background:var(--panel);
+  padding:0 12px 0 34px;color:var(--text);transition:border .12s,background .12s;
+}
+.search input:focus{outline:none;border-color:var(--border-strong);background:#fff}
+.search .ic{position:absolute;left:11px;top:50%;transform:translateY(-50%);opacity:.5;pointer-events:none}
+.search .kbd{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-size:10.5px;color:var(--text-3);border:1px solid var(--border);border-radius:5px;padding:1px 6px;background:#fff;font-family:var(--mono)}
+.topbar .spacer{flex:1}
+.top-actions{display:flex;align-items:center;gap:8px}
+.icon-btn{
+  width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--surface);
+  display:grid;place-items:center;color:var(--text-2);position:relative;transition:background .12s,border .12s;
+}
+.icon-btn:hover{background:var(--panel);border-color:var(--border-strong);color:var(--text)}
+.icon-btn .dot{position:absolute;top:7px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--ink);border:2px solid #fff}
+.top-date{font-size:12px;color:var(--text-2);font-weight:500;padding:0 6px;white-space:nowrap}
+
+.content{padding:24px 26px 60px;max-width:1500px;width:100%;margin:0 auto}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.page-head h1{font-size:22px;letter-spacing:-.02em}
+.page-head p{margin:4px 0 0;color:var(--text-3);font-size:13px}
+.page-head .actions{display:flex;gap:8px;align-items:center}
+
+/* ============================================================= *
+ * BUTTONS / CHIPS / MISC                                        *
+ * ============================================================= */
+.btn{
+  display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 14px;border-radius:8px;
+  border:1px solid var(--border);background:var(--surface);color:var(--text);font-weight:550;font-size:13px;
+  transition:background .12s,border .12s,box-shadow .12s;white-space:nowrap;
+}
+.btn:hover{background:var(--panel);border-color:var(--border-strong)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.primary:hover{background:#000}
+.btn.sm{height:30px;padding:0 11px;font-size:12.5px;border-radius:7px}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.ghost:hover{background:var(--panel)}
+.btn.danger:hover{border-color:#c0c0c6;background:var(--panel-2)}
+.btn .ic{width:15px;height:15px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+.chip{
+  display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:20px;
+  font-size:11.5px;font-weight:600;letter-spacing:.01em;border:1px solid var(--border);background:var(--panel);color:var(--text-2);white-space:nowrap;
+}
+.chip .d{width:6px;height:6px;border-radius:50%;background:var(--g-4)}
+/* status lightness scale, monochrome */
+.st-raised   {background:#fff;color:var(--text-2)} .st-raised .d{background:#c4c4cc}
+.st-waiting  {background:var(--g-1);color:var(--text-2)} .st-waiting .d{background:#a1a1aa}
+.st-received {background:var(--g-1);color:var(--text)} .st-received .d{background:#71717a}
+.st-verified {background:var(--g-2);color:var(--text)} .st-verified .d{background:#52525b}
+.st-pending  {background:#fff;color:var(--text);border-color:var(--border-strong)} .st-pending .d{background:#3f3f46}
+.st-approved {background:var(--ink);color:#fff;border-color:var(--ink)} .st-approved .d{background:#fff}
+.st-paid     {background:var(--g-6);color:#fff;border-color:var(--g-6)} .st-paid .d{background:#fff}
+.st-rejected {background:#fff;color:var(--text-3);border-color:var(--border);text-decoration:line-through} .st-rejected .d{background:#d4d4d8}
+.st-cancelled{background:#fff;color:var(--text-3);border-color:var(--border)} .st-cancelled .d{background:#d4d4d8}
+.st-hold     {background:var(--panel-2);color:var(--text);border-style:dashed} .st-hold .d{background:#71717a}
+
+.pay-yes{color:var(--text)} .pay-no{color:var(--text-3)}
+.tag{font-size:11px;font-weight:600;color:var(--text-2);background:var(--panel-2);border:1px solid var(--border);padding:2px 8px;border-radius:6px}
+
+/* ============================================================= *
+ * CARDS / KPIS                                                  *
+ * ============================================================= */
+.grid{display:grid;gap:14px}
+.kpi-grid{grid-template-columns:repeat(4,1fr)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-1)}
+.kpi{padding:16px 16px 15px;display:flex;flex-direction:column;gap:9px;min-height:104px;transition:box-shadow .15s,border-color .15s}
+.kpi:hover{box-shadow:var(--shadow-2)}
+.kpi .top{display:flex;align-items:center;justify-content:space-between}
+.kpi .label{font-size:12px;color:var(--text-3);font-weight:550;letter-spacing:.01em}
+.kpi .ic{width:16px;height:16px;color:var(--text-3);opacity:.8}
+.kpi .val{font-size:26px;font-weight:680;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.kpi .val small{font-size:14px;font-weight:600;color:var(--text-3)}
+.kpi .delta{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:var(--text-2)}
+.kpi .delta .bar{width:34px;height:4px;border-radius:3px;background:var(--g-2);overflow:hidden}
+.kpi .delta .bar i{display:block;height:100%;background:var(--g-5)}
+.kpi .delta.up::before{content:"▲";font-size:8px;color:var(--g-6)}
+.kpi .delta.down::before{content:"▼";font-size:8px;color:var(--g-4)}
+
+.section{margin-top:22px}
+.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.section-head h2{font-size:14.5px;letter-spacing:-.01em}
+.section-head .sub{font-size:12px;color:var(--text-3)}
+
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-1);overflow:hidden}
+.panel .p-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--border)}
+.panel .p-head h3{font-size:13.5px}
+.panel .p-head .muted{font-size:11.5px;color:var(--text-3);font-weight:500}
+.panel .p-body{padding:16px}
+
+.charts-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.charts-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+
+/* ============================================================= *
+ * CHARTS (SVG)                                                  *
+ * ============================================================= */
+.chart{width:100%;display:block}
+.chart .axis{stroke:var(--border);stroke-width:1}
+.chart .grid-l{stroke:var(--border);stroke-width:1;stroke-dasharray:2 4}
+.chart .bar{fill:var(--g-4);transition:fill .12s}
+.chart .bar.alt{fill:var(--g-3)}
+.chart .bar:hover{fill:var(--g-6)}
+.chart .line{fill:none;stroke:var(--ink);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chart .area{fill:rgba(24,24,27,.05)}
+.chart .dot{fill:#fff;stroke:var(--ink);stroke-width:2}
+.chart .lbl{fill:var(--text-3);font-size:10px;font-family:var(--font)}
+.chart .val-lbl{fill:var(--text-2);font-size:10px;font-weight:600;font-family:var(--mono)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:4px}
+.legend span{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2)}
+.legend i{width:10px;height:10px;border-radius:3px;background:var(--g-4);display:inline-block}
+
+/* ============================================================= *
+ * TABLES                                                        *
+ * ============================================================= */
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-1);overflow:hidden}
+.table-toolbar{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.tt-search{position:relative;flex:1;min-width:180px;max-width:320px}
+.tt-search input{width:100%;height:34px;border:1px solid var(--border);border-radius:7px;padding:0 10px 0 32px;background:var(--panel)}
+.tt-search input:focus{outline:none;border-color:var(--border-strong);background:#fff}
+.tt-search .ic{position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:.5}
+.filter-sel{height:34px;border:1px solid var(--border);border-radius:7px;background:var(--surface);padding:0 28px 0 11px;color:var(--text-2);font-weight:500;
+  appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a92' stroke-width='2.5'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 9px center}
+.filter-sel:focus{outline:none;border-color:var(--border-strong)}
+.tt-spacer{flex:1}
+.tt-meta{font-size:12px;color:var(--text-3);white-space:nowrap}
+
+.tbl-scroll{overflow-x:auto}
+table.data{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+table.data thead th{
+  position:sticky;top:0;background:var(--panel);z-index:2;text-align:left;
+  font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3);
+  padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap;user-select:none;
+}
+table.data thead th.sortable{cursor:pointer}
+table.data thead th.sortable:hover{color:var(--text)}
+table.data thead th .arw{opacity:0;margin-left:4px;font-size:9px}
+table.data thead th.asc .arw,table.data thead th.desc .arw{opacity:1;color:var(--text)}
+table.data thead th.desc .arw::after{content:"▼"}
+table.data thead th.asc .arw::after{content:"▲"}
+table.data thead th.num,table.data td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12px}
+table.data tbody td{padding:11px 14px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle;white-space:nowrap}
+table.data tbody tr{transition:background .1s}
+table.data tbody tr:hover{background:var(--panel)}
+table.data tbody tr:last-child td{border-bottom:none}
+table.data .mono{font-family:var(--mono);font-size:12px;color:var(--text-2)}
+table.data .strong{font-weight:600}
+.row-actions{display:flex;gap:5px;justify-content:flex-end}
+.mini-btn{width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:#fff;display:grid;place-items:center;color:var(--text-2)}
+.mini-btn:hover{background:var(--panel);color:var(--text);border-color:var(--border-strong)}
+
+.pager{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-top:1px solid var(--border);gap:12px;flex-wrap:wrap}
+.pager .info{font-size:12px;color:var(--text-3)}
+.pager .pages{display:flex;gap:4px;align-items:center}
+.pg{min-width:30px;height:30px;padding:0 8px;border-radius:7px;border:1px solid var(--border);background:#fff;color:var(--text-2);font-size:12.5px;font-weight:550;display:grid;place-items:center}
+.pg:hover{background:var(--panel);color:var(--text)}
+.pg.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.pg:disabled{opacity:.4;cursor:not-allowed}
+
+.empty{padding:56px 20px;text-align:center;color:var(--text-3)}
+.empty .ic{width:34px;height:34px;margin:0 auto 12px;opacity:.4}
+.empty h4{font-size:14px;color:var(--text-2);margin-bottom:4px}
+.empty p{font-size:12.5px;margin:0}
+
+/* ============================================================= *
+ * FORMS                                                         *
+ * ============================================================= */
+.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 16px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field.col-2{grid-column:span 2}
+.field.col-3{grid-column:span 3}
+.field label{font-size:12px;font-weight:550;color:var(--text-2);display:flex;align-items:center;gap:5px}
+.field label .req{color:var(--text);font-weight:700}
+.field label .hint{margin-left:auto;font-size:10.5px;color:var(--text-3);font-weight:500}
+.field input,.field select,.field textarea{
+  height:36px;border:1px solid var(--border);border-radius:7px;background:var(--surface);padding:0 11px;color:var(--text);width:100%;transition:border .12s,box-shadow .12s;
+}
+.field textarea{height:auto;min-height:64px;padding:9px 11px;resize:vertical;line-height:1.5}
+.field select{appearance:none;padding-right:30px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a92' stroke-width='2.5'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 10px center}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 3px rgba(24,24,27,.08)}
+.field input[readonly]{background:var(--panel-2);color:var(--text-2);cursor:default}
+.field.computed input{background:var(--panel-2);font-family:var(--mono);font-weight:600;color:var(--text)}
+.field .err{font-size:11px;color:var(--text);font-weight:600;display:none}
+.field.invalid input,.field.invalid select{border-color:var(--g-6);box-shadow:0 0 0 3px rgba(63,63,70,.1)}
+.field.invalid .err{display:block}
+.field .prefix-wrap{position:relative}
+.field .prefix-wrap .cur{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-3);font-size:12px;pointer-events:none}
+.field .prefix-wrap input{padding-left:26px;font-family:var(--mono)}
+.file-drop{border:1.5px dashed var(--border-strong);border-radius:8px;padding:16px;text-align:center;color:var(--text-3);font-size:12px;background:var(--panel);cursor:pointer}
+.file-drop:hover{background:var(--panel-2);border-color:#c0c0c6}
+.file-drop b{color:var(--text-2);font-weight:600}
+.form-section-title{grid-column:1/-1;font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);padding-top:8px;border-top:1px solid var(--border);margin-top:4px}
+.form-section-title:first-child{border-top:none;padding-top:0;margin-top:0}
+
+/* multi-select charges */
+.charge-box{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--panel);display:flex;flex-wrap:wrap;gap:7px}
+.charge-opt{display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:#fff;font-size:12px;font-weight:500;color:var(--text-2);cursor:pointer;user-select:none}
+.charge-opt:hover{border-color:var(--border-strong)}
+.charge-opt.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.charge-opt input{display:none}
+.charge-opt .amt{font-family:var(--mono);font-size:11px;opacity:.7}
+
+/* summary rail */
+.calc-summary{position:sticky;top:76px}
+.calc-summary .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border);font-size:12.5px}
+.calc-summary .row:last-child{border-bottom:none}
+.calc-summary .row .k{color:var(--text-3)}
+.calc-summary .row .v{font-family:var(--mono);font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+.calc-summary .row.total{margin-top:4px;padding-top:12px;border-top:1px solid var(--border);border-bottom:none}
+.calc-summary .row.total .k{font-weight:600;color:var(--text);font-size:13px}
+.calc-summary .row.total .v{font-size:16px}
+.calc-summary .margin-badge{margin-top:14px;padding:12px;border-radius:9px;background:var(--panel);border:1px solid var(--border);text-align:center}
+.calc-summary .margin-badge .m-val{font-size:24px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.calc-summary .margin-badge .m-lbl{font-size:11px;color:var(--text-3);font-weight:550;letter-spacing:.03em;text-transform:uppercase;margin-top:2px}
+
+/* ============================================================= *
+ * MODAL / DRAWER / TOAST                                        *
+ * ============================================================= */
+.overlay{position:fixed;inset:0;background:rgba(24,24,27,.28);backdrop-filter:blur(1.5px);z-index:100;display:flex;opacity:0;pointer-events:none;transition:opacity .16s}
+.overlay.show{opacity:1;pointer-events:auto}
+.overlay.center{align-items:center;justify-content:center;padding:24px}
+.modal{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;transform:translateY(8px) scale(.99);transition:transform .16s}
+.modal.lg{max-width:820px}
+.overlay.show .modal{transform:none}
+.modal .m-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px;border-bottom:1px solid var(--border)}
+.modal .m-head h3{font-size:16px}
+.modal .m-head p{margin:3px 0 0;font-size:12.5px;color:var(--text-3)}
+.modal .m-body{padding:20px;overflow-y:auto}
+.modal .m-foot{padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:9px;background:var(--panel)}
+.x-btn{width:32px;height:32px;border-radius:7px;border:1px solid transparent;background:transparent;display:grid;place-items:center;color:var(--text-3)}
+.x-btn:hover{background:var(--panel);color:var(--text)}
+
+/* drawer */
+.overlay.right{justify-content:flex-end}
+.drawer{background:#fff;height:100%;width:560px;max-width:94vw;box-shadow:var(--shadow-drawer);display:flex;flex-direction:column;transform:translateX(20px);transition:transform .2s cubic-bezier(.4,0,.2,1)}
+.overlay.show .drawer{transform:none}
+.drawer .d-head{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.drawer .d-head h3{font-size:16px}
+.drawer .d-head .sub{font-size:12px;color:var(--text-3);margin-top:3px;font-family:var(--mono)}
+.drawer .d-body{padding:20px 22px;overflow-y:auto;flex:1}
+.drawer .d-foot{padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:9px;background:var(--panel)}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 20px}
+.dl{display:flex;flex-direction:column;gap:2px}
+.dl dt{font-size:11px;color:var(--text-3);font-weight:550;letter-spacing:.02em;text-transform:uppercase}
+.dl dd{margin:0;font-size:13px;font-weight:550;color:var(--text)}
+.dl dd.mono{font-family:var(--mono);font-size:12.5px}
+.d-block{margin-top:20px;padding-top:18px;border-top:1px solid var(--border)}
+.d-block h4{font-size:12px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:12px}
+
+/* invoice preview */
+.invoice-mini{border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.invoice-mini .im-head{padding:12px 14px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.invoice-mini .im-head b{font-size:13px}
+.invoice-mini table{width:100%;border-collapse:collapse;font-size:12px}
+.invoice-mini td{padding:8px 14px;border-bottom:1px solid var(--border)}
+.invoice-mini td:last-child{text-align:right;font-family:var(--mono);font-weight:600}
+.invoice-mini tr:last-child td{border-bottom:none;font-weight:700;background:var(--panel)}
+
+/* workflow */
+.workflow{display:flex;align-items:center;gap:0;overflow-x:auto;padding:4px 0}
+.wf-step{display:flex;align-items:center;flex:none}
+.wf-node{display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center;min-width:82px}
+.wf-node .cir{width:30px;height:30px;border-radius:50%;border:2px solid var(--border-strong);background:#fff;display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--text-3)}
+.wf-node.done .cir{background:var(--ink);border-color:var(--ink);color:#fff}
+.wf-node.current .cir{border-color:var(--ink);color:var(--ink);box-shadow:0 0 0 4px rgba(24,24,27,.08)}
+.wf-node .t{font-size:10.5px;font-weight:550;color:var(--text-2);max-width:76px}
+.wf-node.done .t,.wf-node.current .t{color:var(--text)}
+.wf-line{width:34px;height:2px;background:var(--border-strong);margin:0 -2px;margin-bottom:24px}
+.wf-line.done{background:var(--ink)}
+
+/* approval badge */
+.approval-badge{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid var(--ink);border-radius:10px;background:var(--panel)}
+.approval-badge .seal{width:44px;height:44px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;flex:none}
+.approval-badge .info b{display:block;font-size:13.5px}
+.approval-badge .info span{font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+
+/* timeline */
+.timeline{position:relative;padding-left:22px}
+.timeline::before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:var(--border)}
+.tl-item{position:relative;padding-bottom:16px}
+.tl-item:last-child{padding-bottom:0}
+.tl-item::before{content:"";position:absolute;left:-19px;top:4px;width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid var(--g-4)}
+.tl-item.hi::before{background:var(--ink);border-color:var(--ink)}
+.tl-item .tl-t{font-size:12.5px;font-weight:600}
+.tl-item .tl-m{font-size:12px;color:var(--text-2);margin-top:1px}
+.tl-item .tl-time{font-size:11px;color:var(--text-3);font-family:var(--mono);margin-top:2px}
+
+.comment-box{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.comment-box textarea{border:1px solid var(--border);border-radius:8px;padding:10px;min-height:56px;resize:vertical;width:100%}
+.comment-box textarea:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 3px rgba(24,24,27,.08)}
+
+/* toast */
+.toast-wrap{position:fixed;bottom:22px;right:22px;z-index:200;display:flex;flex-direction:column;gap:10px}
+.toast{display:flex;align-items:flex-start;gap:11px;background:var(--ink);color:#fff;padding:12px 15px;border-radius:10px;box-shadow:var(--shadow-2);min-width:260px;max-width:360px;transform:translateX(20px);opacity:0;transition:.2s}
+.toast.show{transform:none;opacity:1}
+.toast .ic{flex:none;margin-top:1px}
+.toast b{font-size:13px;font-weight:600;display:block}
+.toast span{font-size:12px;color:rgba(255,255,255,.75)}
+
+/* recent activity list */
+.act-list{display:flex;flex-direction:column}
+.act-item{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)}
+.act-item:last-child{border-bottom:none}
+.act-item .av{width:32px;height:32px;border-radius:8px;background:var(--panel-2);display:grid;place-items:center;color:var(--text-2);flex:none}
+.act-item .txt{min-width:0;flex:1}
+.act-item .txt b{font-size:12.5px;font-weight:600}
+.act-item .txt p{margin:1px 0 0;font-size:11.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.act-item .when{font-size:11px;color:var(--text-3);font-family:var(--mono);white-space:nowrap}
+.act-item .amt{font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap}
+
+/* vendor cards */
+.vendor-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.vendor-card{padding:16px;display:flex;flex-direction:column;gap:12px}
+.vendor-card .vc-top{display:flex;align-items:center;gap:11px}
+.vendor-card .vc-logo{width:40px;height:40px;border-radius:9px;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:700;font-size:15px;flex:none}
+.vendor-card .vc-name{font-size:14px;font-weight:600;line-height:1.2}
+.vendor-card .vc-meta{font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+.vendor-card .vc-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:12px;border-top:1px solid var(--border)}
+.vendor-card .vc-stat .n{font-size:15px;font-weight:650;font-variant-numeric:tabular-nums}
+.vendor-card .vc-stat .l{font-size:10.5px;color:var(--text-3);text-transform:uppercase;letter-spacing:.03em}
+.rating{display:inline-flex;gap:1px}
+.rating .s{color:var(--g-6)}
+.rating .s.off{color:var(--g-3)}
+
+/* settings */
+.settings-grid{display:grid;grid-template-columns:220px 1fr;gap:0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:#fff;box-shadow:var(--shadow-1)}
+.settings-nav{border-right:1px solid var(--border);padding:10px;background:var(--panel)}
+.settings-nav a{display:block;padding:9px 12px;border-radius:7px;font-size:13px;font-weight:500;color:var(--text-2);margin-bottom:2px}
+.settings-nav a:hover{background:#fff}
+.settings-nav a.active{background:var(--ink);color:#fff}
+.settings-body{padding:22px}
+
+/* reports */
+.report-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.report-card{padding:16px;display:flex;flex-direction:column;gap:12px;transition:box-shadow .15s,border-color .15s}
+.report-card:hover{box-shadow:var(--shadow-2);border-color:var(--border-strong)}
+.report-card .rc-ic{width:36px;height:36px;border-radius:9px;background:var(--panel-2);display:grid;place-items:center;color:var(--text-2)}
+.report-card h4{font-size:13.5px}
+.report-card p{font-size:12px;color:var(--text-3);margin:0;flex:1}
+.report-card .rc-actions{display:flex;gap:6px}
+
+.skeleton{background:linear-gradient(90deg,var(--panel) 25%,var(--panel-2) 50%,var(--panel) 75%);background-size:200% 100%;animation:sk 1.3s infinite;border-radius:6px}
+@keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* ── dashboard filter bar ── */
+.dash-filter{display:flex;align-items:flex-end;gap:14px;padding:14px 16px;margin-bottom:18px;flex-wrap:wrap}
+.df-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.df-field label{font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:.02em;text-transform:uppercase}
+.df-field select,.df-field input{height:36px;padding:0 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:13px;min-width:150px}
+.df-field select{appearance:none;padding-right:28px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a92' stroke-width='2.5'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 9px center}
+.df-field select:focus,.df-field input:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 3px rgba(24,24,27,.08)}
+.df-actions{display:flex;gap:8px;align-items:center}
+.df-count{margin-left:auto;font-size:12px;color:var(--text-3);font-family:var(--mono);align-self:center;white-space:nowrap}
+
+/* clickable KPI */
+.kpi.clickable{cursor:pointer}
+.kpi.clickable:hover{border-color:var(--border-strong);box-shadow:var(--shadow-2)}
+.kpi.clickable:hover .go-hint{opacity:1}
+.go-hint{font-size:10px;font-weight:600;color:var(--text-3);opacity:.55;transition:opacity .15s;letter-spacing:.02em}
+
+/* ── multi-SKU cards (vendor entry form) ── */
+.sku-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);padding:14px;margin-bottom:12px}
+.sk-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sk-head b{font-size:12px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2)}
+.sk-remove{width:26px;height:26px;display:grid;place-items:center;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text-3);cursor:pointer;transition:color .15s,border-color .15s}
+.sk-remove:hover{color:var(--text);border-color:var(--border-strong);background:var(--panel-2)}
+.sk-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 14px}
+.pp-title{grid-column:1/-1;font-size:10.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:14px 0 2px;padding-top:12px;border-top:1px dashed var(--border)}
+.pp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px 12px;margin-top:10px}
+.pp-item{display:flex;flex-direction:column;gap:5px;min-width:0}
+.pp-item label{font-size:11px;font-weight:550;color:var(--text-2)}
+.pp-in{position:relative;display:flex;align-items:center}
+.pp-in .cur{position:absolute;left:9px;color:var(--text-3);font-size:11px;pointer-events:none}
+.pp-in .pp-input{width:100%;height:34px;padding:0 9px 0 22px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);font-family:var(--mono);font-size:12.5px;color:var(--text)}
+.pp-in .pp-input:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 3px rgba(24,24,27,.08)}
+.pp-tot{position:absolute;right:9px;font-size:10px;color:var(--text-3);font-family:var(--mono);pointer-events:none;background:var(--surface);padding-left:4px}
+.sk-line{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-3)}
+.sk-line b{color:var(--text);font-family:var(--mono);font-weight:600;margin-left:4px}
+
+/* ── SKU detail list (view drawer) ── */
+.sku-detail-list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.sku-detail{border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px;background:var(--panel)}
+.sd-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+.sd-top b{font-size:13px}
+.sd-top .mono{font-size:11px;color:var(--text-3)}
+.sd-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--text-2)}
+.sd-row span:last-child{font-family:var(--mono);color:var(--text)}
+.sd-row.sub{color:var(--text-3);padding-left:10px}
+.sd-row.sub span:last-child{color:var(--text-2)}
+
+/* delivery note */
+.delivery-note{background:var(--panel-2);border:1px solid var(--border);border-left:3px solid var(--g-5);border-radius:var(--radius-sm);padding:10px 12px;font-size:12.5px;color:var(--text-2);line-height:1.5}
+
+/* ── received-details checklist (approval drawer) ── */
+.recv-check{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.rc-item{display:flex;align-items:flex-start;gap:11px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;cursor:pointer;transition:border-color .15s,background .15s}
+.rc-item:hover{border-color:var(--border-strong);background:var(--panel)}
+.rc-box{width:17px;height:17px;margin-top:2px;flex-shrink:0;accent-color:var(--ink);cursor:pointer}
+.rc-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rc-body b{font-size:13px}
+.rc-body .mono{font-size:11px;color:var(--text-3)}
+.rc-qty{font-size:11.5px;color:var(--text-2);font-family:var(--mono)}
+.rc-note{font-size:11.5px;color:var(--text-3);margin-top:2px}
+
+/* responsive */
+@media(max-width:1180px){
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .charts-3,.vendor-grid,.report-grid{grid-template-columns:1fr 1fr}
+  .form-grid{grid-template-columns:repeat(2,1fr)}
+  .field.col-3{grid-column:span 2}
+  .pp-grid{grid-template-columns:repeat(3,1fr)}
+}
+@media(max-width:960px){
+  :root{--sb-w:0px}
+  .sidebar{transform:translateX(-100%);transition:transform .2s;box-shadow:var(--shadow-2)}
+  .sidebar.open{transform:none;--sb-w:236px;width:236px}
+  .app{grid-template-columns:1fr}
+  .main{grid-column:1}
+  .menu-toggle{display:grid !important}
+  .search{width:auto;flex:1}
+  .top-date{display:none}
+}
+@media(max-width:720px){
+  .kpi-grid,.charts-2,.charts-3,.vendor-grid,.report-grid,.form-grid{grid-template-columns:1fr}
+  .sk-grid{grid-template-columns:1fr}
+  .pp-grid{grid-template-columns:repeat(2,1fr)}
+  .dash-filter{flex-direction:column;align-items:stretch}
+  .df-field select,.df-field input{min-width:0;width:100%}
+  .df-count{margin-left:0}
+  .detail-grid{grid-template-columns:1fr}
+  .settings-grid{grid-template-columns:1fr}
+  .settings-nav{border-right:none;border-bottom:1px solid var(--border);display:flex;overflow-x:auto}
+  .content{padding:16px 14px 48px}
+}
+.menu-toggle{display:none}
+@media print{
+  .sidebar,.topbar,.no-print{display:none !important}
+  .app{grid-template-columns:1fr}
+  .main{grid-column:1}
+  .content{padding:0;max-width:none}
+  .card,.panel,.table-wrap{box-shadow:none;border-color:#ccc}
+  body{background:#fff}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="mark">K</div>
+      <div>
+        <div class="name">King of Cards</div>
+        <div class="sub">Procurement ERP</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav"><!-- built by JS --></nav>
+    <div class="foot">
+      <div class="av">RA</div>
+      <div class="who">
+        <b>Rahul Admin</b>
+        <span>Finance Administrator</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===================== MAIN ===================== -->
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-toggle" id="menuToggle" title="Menu">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+      <div class="crumbs" id="crumbs"><b>Dashboard</b></div>
+      <div class="search">
+        <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="globalSearch" placeholder="Search PO, invoice, vendor, SKU…" autocomplete="off"/>
+        <span class="kbd">/</span>
+      </div>
+      <div class="spacer"></div>
+      <div class="top-actions">
+        <span class="top-date" id="topDate"></span>
+        <button class="icon-btn" id="refreshBtn" title="Refresh data">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        </button>
+        <button class="icon-btn" id="notifBtn" title="Notifications">
+          <span class="dot"></span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        </button>
+        <button class="btn sm" id="exportTop">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+          Export
+        </button>
+      </div>
+    </header>
+    <main class="content" id="view"><!-- pages render here --></main>
+  </div>
+</div>
+
+<!-- overlay hosts (modal + drawer) -->
+<div class="overlay center" id="modalHost"></div>
+<div class="overlay right" id="drawerHost"></div>
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+/* ============================================================= *
+ * 3. DATA LAYER — seeded so numbers are stable across reloads    *
+ * ============================================================= */
+const RS = (function(){let s=987654321;return ()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return ((s>>>0)/4294967296);};})();
+const rint=(a,b)=>Math.floor(RS()*(b-a+1))+a;
+const pick=arr=>arr[Math.floor(RS()*arr.length)];
+const round2=n=>Math.round(n*100)/100;
+const INR=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:0});
+const INR2=n=>'₹'+Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const PCT=n=>Number(n||0).toFixed(1)+'%';
+const pad=(n,l=4)=>String(n).padStart(l,'0');
+
+const VENDOR_SEED=[
+  {name:'Rajwadi Cards & Crafts',city:'Jaipur',person:'Mahesh Agarwal'},
+  {name:'Shubh Mangal Prints',city:'Surat',person:'Nilesh Shah'},
+  {name:'Royal Invites Co.',city:'Delhi',person:'Karan Malhotra'},
+  {name:'Sanskriti Wedding Cards',city:'Kolkata',person:'Debashish Roy'},
+  {name:'Meenakari Print House',city:'Jaipur',person:'Pooja Sharma'},
+  {name:'Ganpati Card Works',city:'Mumbai',person:'Vikram Joshi'},
+  {name:'Elegant Weddings Ltd',city:'Bengaluru',person:'Anitha Reddy'},
+  {name:'Kumkum Cards',city:'Ahmedabad',person:'Jignesh Patel'},
+  {name:'Deep Prakash Printers',city:'Ludhiana',person:'Gurpreet Singh'},
+  {name:'Nakshatra Invitations',city:'Hyderabad',person:'Srinivas Rao'}
+];
+const PRODUCTS=[
+  ['WC-SCROLL','Royal Scroll Wedding Card'],['WC-BOX','Premium Box Invitation'],
+  ['WC-LASER','Laser-Cut Floral Card'],['WC-GOLD','Gold Foil Hardcover Card'],
+  ['WC-ACRYL','Acrylic Transparent Card'],['WC-VELVET','Velvet Padded Invite'],
+  ['WC-PLAIN','Classic Single-Fold Card'],['WC-MULTI','Multi-Insert Family Set'],
+  ['WC-ECO','Eco Handmade Paper Card'],['WC-DIGI','Digital-Print Economy Card']
+];
+// Additional charges are entered as COST PER PIECE and multiplied by SKU quantity.
+const CHARGE_TYPES=['Nameplate','EP Sticker','MGI','Scodix','Extra Customisation','Transportation','Handling'];
+const CHARGE_DEFAULT_PP={'Nameplate':[1,6],'EP Sticker':[0.5,3],'MGI':[2,9],'Scodix':[3,12],'Extra Customisation':[2,15],'Transportation':[1,8],'Handling':[0.5,4]};
+const PAYMENT_TERMS=['Net 15','Net 30','Net 45','Advance 50%','On Delivery'];
+const CREATORS=['Priya Finance','Amit Finance','Sneha Finance','Rohan Finance'];
+const STATUS_FLOW=['PO Raised','Waiting for Vendor','Received','Verified','Pending Approval','Approved','Paid'];
+
+// vendors
+const vendors=VENDOR_SEED.map((v,i)=>({
+  id:'VN-'+pad(i+1,3),
+  name:v.name, city:v.city, person:v.person,
+  gst:`${rint(6,29)}${['ABCDE','PQRSX','LMNOP','GHJKT'][i%4]}${rint(1000,9999)}${['A','B','C','F'][i%4]}1Z${rint(1,9)}`,
+  pan:`${['ABCDE','PQRSX','LMNOP','GHJKT'][i%4]}${rint(1000,9999)}${['A','B','C','F'][i%4]}`,
+  phone:`+91 ${rint(70,99)}${rint(100,999)} ${rint(10000,99999)}`,
+  email:`accounts@${v.name.toLowerCase().replace(/[^a-z]/g,'').slice(0,10)}.in`,
+  address:`${rint(1,99)}, ${['MG Road','Station Rd','Gandhi Marg','Market Lane','Industrial Area'][i%5]}, ${v.city}`,
+  terms:pick(PAYMENT_TERMS),
+  avgDelivery:rint(3,14),
+  rating:rint(3,5),
+  status: RS()>0.15?'Active':'Inactive'
+}));
+const vmap=Object.fromEntries(vendors.map(v=>[v.id,v]));
+
+/* ---- calculation engine (multi-SKU, per-piece additional charges) ---- */
+// Each additional charge = {type, perPiece}. Its line total = perPiece × SKU qty.
+// A SKU = {sku,productName,qty,rate,packaging,charges[],sellingPrice(per unit)}.
+function computeSku(s){
+  const qty=+s.qty||0, rate=+s.rate||0;
+  const base=round2(qty*rate);
+  const packaging=round2(+s.packaging||0);
+  const chargeTotals={};
+  let chargeSum=0;
+  (s.charges||[]).forEach(c=>{const amt=round2((+c.perPiece||0)*qty);chargeTotals[c.type]=amt;chargeSum=round2(chargeSum+amt);});
+  const lineExtra=round2(packaging+chargeSum);
+  const lineGross=round2(base+lineExtra);
+  const sell=round2((+s.sellingPrice||0)*qty);   // sellingPrice is per unit
+  const lineGp=round2(sell-lineGross);
+  const lineGm=sell?round2(lineGp/sell*100):0;
+  return {qty,rate,base,packaging,chargeTotals,chargeSum,lineExtra,lineGross,sell,lineGp,lineGm};
+}
+function computeEntry(e){
+  const gstPct=+e.gstPct||0;
+  const lines=(e.skus||[]).map(computeSku);
+  const total=round2(lines.reduce((s,l)=>s+l.base,0));
+  const packaging=round2(lines.reduce((s,l)=>s+l.packaging,0));
+  const chargeTotals={};
+  lines.forEach(l=>Object.entries(l.chargeTotals).forEach(([k,v])=>chargeTotals[k]=round2((chargeTotals[k]||0)+v)));
+  const transport=round2(chargeTotals['Transportation']||0);
+  const handling=round2(chargeTotals['Handling']||0);
+  const addl=round2(Object.entries(chargeTotals).reduce((s,[k,v])=>s+((k==='Transportation'||k==='Handling')?0:v),0));
+  const chargeSum=round2(lines.reduce((s,l)=>s+l.chargeSum,0));
+  const extra=round2(packaging+chargeSum);
+  const gross=round2(total+extra);
+  const gstAmt=round2(gross*gstPct/100);
+  const final=round2(gross+gstAmt);
+  const landing=final;
+  const qty=lines.reduce((s,l)=>s+l.qty,0);
+  const landingPerUnit=qty?round2(final/qty):0;
+  const sellTotal=round2(lines.reduce((s,l)=>s+l.sell,0));
+  const gp=round2(sellTotal-landing);
+  const gm=sellTotal?round2(gp/sellTotal*100):0;
+  const landingPct=sellTotal?round2(landing/sellTotal*100):0;
+  return {lines,total,packaging,chargeTotals,transport,handling,addl,chargeSum,extra,gross,gstAmt,final,landing,qty,landingPerUnit,sellTotal,gp,gm,landingPct,sellingPrice:sellTotal};
+}
+
+// months for time series
+const MONTHS=['Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun','Jul'];
+const today=new Date(2026,6,21);
+function dOffset(days){const dt=new Date(today);dt.setDate(dt.getDate()-days);return dt;}
+const fmtDate=dt=>dt?dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'—';
+const fmtShort=dt=>dt?dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
+
+// build ~104 vendor entries (each with 1–3 SKUs)
+const orders=[];
+for(let i=0;i<104;i++){
+  const v=pick(vendors);
+  const nSku=rint(1,3);
+  const skus=[];
+  const usedProd=new Set();
+  for(let s=0;s<nSku;s++){
+    let prod=pick(PRODUCTS);let guard=0;while(usedProd.has(prod[0])&&guard++<6)prod=pick(PRODUCTS);usedProd.add(prod[0]);
+    const qty=rint(50,600);
+    const rate=round2(rint(18,240)+RS());
+    const packaging=rint(0,1)?rint(200,2500):0;
+    const charges=[];
+    CHARGE_TYPES.forEach(t=>{const [lo,hi]=CHARGE_DEFAULT_PP[t];if(RS()<0.6)charges.push({type:t,perPiece:round2(lo+RS()*(hi-lo))});});
+    skus.push({sku:prod[0]+'-'+rint(1,99),productName:prod[1],qty,rate,packaging,charges,sellingPrice:0});
+  }
+  const gstPct=pick([5,12,18]);
+  const pre=computeEntry({skus,gstPct});
+  // selling price per unit built to yield a spread of margins, distributed across SKUs
+  const targetMargin=rint(-4,42);
+  const sellTotalTarget=round2(pre.final/(1-targetMargin/100));
+  skus.forEach(s=>{const cl=computeSku(s);const share=pre.gross?cl.lineGross/pre.gross:1/skus.length;const lineSell=sellTotalTarget*share;s.sellingPrice=s.qty?round2(lineSell/s.qty):0;});
+  const rec=computeEntry({skus,gstPct});
+
+  const ordDaysAgo=rint(2,150);
+  const ordered=dOffset(ordDaysAgo);
+  const expDelivery=dOffset(ordDaysAgo-v.avgDelivery);
+  const recvDaysAgo=Math.max(0,ordDaysAgo-v.avgDelivery-rint(-2,4));
+  const stageRoll=RS();
+  let statusIdx;
+  if(stageRoll<0.10) statusIdx=0;
+  else if(stageRoll<0.22) statusIdx=1;
+  else if(stageRoll<0.38) statusIdx=2;
+  else if(stageRoll<0.52) statusIdx=3;
+  else if(stageRoll<0.66) statusIdx=4;
+  else if(stageRoll<0.82) statusIdx=5;
+  else statusIdx=6;
+  let status=STATUS_FLOW[statusIdx];
+  // sprinkle rejected / cancelled / hold
+  const anomaly=RS();
+  if(anomaly>0.95) status='Rejected';
+  else if(anomaly>0.92) status='Cancelled';
+  else if(anomaly<0.04 && statusIdx===4) status='Hold';
+
+  const received=statusIdx>=2 && status!=='Cancelled';
+  const receivedDate=received?dOffset(recvDaysAgo):null;
+  const approved=['Approved','Paid'].includes(status);
+  const paid=status==='Paid';
+
+  const invNo=received?`INV/${v.id.slice(3)}/${rint(1000,9999)}`:null;
+  const createdBy=pick(CREATORS);
+  const approver='Rahul Admin';
+  const approvalDate=approved?dOffset(Math.max(0,recvDaysAgo-rint(1,5))):null;
+
+  orders.push({
+    id:'PO-2026-'+pad(1000+i,4),
+    coId:'ORD-'+pad(5200+i,4),
+    vendorId:v.id,
+    skus, gstPct,
+    ...rec,
+    sku:skus[0].sku, productName:skus[0].productName,
+    ordered, expDelivery, receivedDate, status,
+    adminApproval: approved?'Approved':(status==='Rejected'?'Rejected':(status==='Hold'?'On Hold':(status==='Pending Approval'?'Awaiting':'—'))),
+    paymentStatus: paid?'Paid':(approved?'Payment Ready':'Unpaid'),
+    invoiceNo:invNo,
+    invoiceDate:receivedDate,
+    dueDate: receivedDate?new Date(receivedDate.getTime()+ ({'Net 15':15,'Net 30':30,'Net 45':45,'Advance 50%':7,'On Delivery':0}[v.terms]||30)*864e5):null,
+    createdBy, approver, approvalDate,
+    createdDate:ordered, modifiedDate:receivedDate||ordered,
+    remarks: pick(['','Bulk festive-season order','Sample approved by client','Rush delivery requested','Reorder from repeat client','Partial dispatch expected','']),
+    locked:paid,
+    deliveryNote: received&&RS()<0.18?pick(['Short by 12 pieces — vendor to reconcile','Minor print smudge on 3 boxes, accepted','Delivered 2 days late','One carton damaged in transit','Awaiting replacement for defective lot']):'',
+    comments:[], notes:''
+  });
+}
+const omap=Object.fromEntries(orders.map(o=>[o.id,o]));
+
+// enrich vendor rollups
+vendors.forEach(v=>{
+  const os=orders.filter(o=>o.vendorId===v.id);
+  v.ordersCompleted=os.filter(o=>['Paid','Approved'].includes(o.status)).length;
+  v.pendingOrders=os.filter(o=>['PO Raised','Waiting for Vendor','Received','Verified','Pending Approval','Hold'].includes(o.status)).length;
+  v.totalProcurement=round2(os.reduce((s,o)=>s+o.final,0));
+  const margins=os.filter(o=>o.status!=='Cancelled').map(o=>o.gm);
+  v.avgMargin=margins.length?round2(margins.reduce((a,b)=>a+b,0)/margins.length):0;
+});
+
+/* ============================================================= *
+ * 5. SHARED UI HELPERS                                          *
+ * ============================================================= */
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+const statusClass=s=>({'PO Raised':'st-raised','Waiting for Vendor':'st-waiting','Received':'st-received','Verified':'st-verified','Pending Approval':'st-pending','Approved':'st-approved','Paid':'st-paid','Rejected':'st-rejected','Cancelled':'st-cancelled','Hold':'st-hold'}[s]||'st-raised');
+const statusChip=s=>`<span class="chip ${statusClass(s)}"><span class="d"></span>${s}</span>`;
+
+function toast(title,msg){
+  const t=el('div','toast',`<span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></span><div><b>${title}</b>${msg?`<span>${msg}</span>`:''}</div>`);
+  $('#toastWrap').appendChild(t);
+  requestAnimationFrame(()=>t.classList.add('show'));
+  setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),250);},3200);
+}
+
+function openModal(node,size){
+  const host=$('#modalHost');
+  host.innerHTML='';
+  const m=el('div','modal'+(size?' '+size:''));
+  m.appendChild(node);
+  host.appendChild(m);
+  host.classList.add('show');
+  const close=()=>closeModal();
+  host.onclick=e=>{if(e.target===host)close();};
+  document.onkeydown=e=>{if(e.key==='Escape')close();};
+  $$('[data-close]',m).forEach(b=>b.onclick=close);
+  return m;
+}
+function closeModal(){const h=$('#modalHost');h.classList.remove('show');document.onkeydown=null;setTimeout(()=>h.innerHTML='',180);}
+function openDrawer(node){
+  const host=$('#drawerHost');host.innerHTML='';
+  const d=el('div','drawer');d.appendChild(node);host.appendChild(d);
+  host.classList.add('show');
+  host.onclick=e=>{if(e.target===host)closeDrawer();};
+  document.onkeydown=e=>{if(e.key==='Escape')closeDrawer();};
+  $$('[data-close]',d).forEach(b=>b.onclick=closeDrawer);
+  return d;
+}
+function closeDrawer(){const h=$('#drawerHost');h.classList.remove('show');document.onkeydown=null;setTimeout(()=>h.innerHTML='',220);}
+
+function confirmDialog(title,msg,okLabel,onOk,danger){
+  const n=el('div',null,`
+    <div class="m-head"><div><h3>${title}</h3><p>${msg}</p></div></div>
+    <div class="m-foot"><button class="btn" data-close>Cancel</button><button class="btn ${danger?'danger':'primary'}" id="okBtn">${okLabel}</button></div>`);
+  openModal(n);
+  $('#okBtn',n).onclick=()=>{closeModal();onOk&&onOk();};
+}
+
+// CSV export
+function exportCSV(filename,rows,cols){
+  const head=cols.map(c=>`"${c.label}"`).join(',');
+  const body=rows.map(r=>cols.map(c=>{
+    let v=typeof c.val==='function'?c.val(r):r[c.key];
+    if(v==null)v='';v=String(v).replace(/"/g,'""');
+    return `"${v}"`;
+  }).join(',')).join('\n');
+  const blob=new Blob([head+'\n'+body],{type:'text/csv;charset=utf-8;'});
+  const a=el('a');a.href=URL.createObjectURL(blob);a.download=filename;a.click();
+  toast('Export ready',filename+' downloaded');
+}
+
+/* ---- SVG chart builders (grayscale) ---- */
+function barChart(data,{w=520,h=190,fmt=INR}={}){
+  const pad={t:14,r:12,b:26,l:12};
+  const max=Math.max(...data.map(d=>d.v),1);
+  const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
+  const bw=iw/data.length*0.6, gap=iw/data.length;
+  let bars='',lbls='',grid='';
+  for(let g=1;g<=3;g++){const y=pad.t+ih-(ih*g/3);grid+=`<line class="grid-l" x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}"/>`;}
+  data.forEach((d,i)=>{
+    const bh=Math.max(2,ih*d.v/max);
+    const x=pad.l+i*gap+(gap-bw)/2, y=pad.t+ih-bh;
+    bars+=`<rect class="bar ${i%2?'alt':''}" x="${x}" y="${y}" width="${bw}" height="${bh}" rx="3"><title>${d.k}: ${fmt(d.v)}</title></rect>`;
+    lbls+=`<text class="lbl" x="${x+bw/2}" y="${h-9}" text-anchor="middle">${d.k}</text>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet"><line class="axis" x1="${pad.l}" y1="${pad.t+ih}" x2="${w-pad.r}" y2="${pad.t+ih}"/>${grid}${bars}${lbls}</svg>`;
+}
+function lineChart(data,{w=520,h=190,fmt=INR}={}){
+  const pad={t:16,r:14,b:26,l:14};
+  const max=Math.max(...data.map(d=>d.v),1), min=Math.min(...data.map(d=>d.v),0);
+  const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
+  const X=i=>pad.l+iw*i/(data.length-1);
+  const Y=v=>pad.t+ih-ih*(v-min)/((max-min)||1);
+  let grid='';for(let g=0;g<=3;g++){const y=pad.t+ih-(ih*g/3);grid+=`<line class="grid-l" x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}"/>`;}
+  const pts=data.map((d,i)=>`${X(i)},${Y(d.v)}`).join(' ');
+  const area=`M${X(0)},${pad.t+ih} L`+data.map((d,i)=>`${X(i)},${Y(d.v)}`).join(' L')+` L${X(data.length-1)},${pad.t+ih} Z`;
+  let dots='',lbls='';
+  data.forEach((d,i)=>{dots+=`<circle class="dot" cx="${X(i)}" cy="${Y(d.v)}" r="3"><title>${d.k}: ${fmt(d.v)}</title></circle>`;
+    if(i%Math.ceil(data.length/8)===0||i===data.length-1)lbls+=`<text class="lbl" x="${X(i)}" y="${h-9}" text-anchor="middle">${d.k}</text>`;});
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}<path class="area" d="${area}"/><polyline class="line" points="${pts}"/>${dots}${lbls}</svg>`;
+}
+function hbarChart(data,{w=520,fmt=INR}={}){
+  const rh=26, pad={t:6,r:70,l:130}, h=data.length*rh+pad.t+6;
+  const max=Math.max(...data.map(d=>d.v),1);
+  const iw=w-pad.l-pad.r;
+  let rows='';
+  data.forEach((d,i)=>{
+    const bw=Math.max(3,iw*d.v/max), y=pad.t+i*rh;
+    rows+=`<text class="lbl" x="${pad.l-10}" y="${y+16}" text-anchor="end" style="fill:var(--text-2);font-size:11px">${d.k}</text>
+    <rect class="bar" x="${pad.l}" y="${y+5}" width="${bw}" height="15" rx="3"><title>${d.k}: ${fmt(d.v)}</title></rect>
+    <text class="val-lbl" x="${pad.l+bw+8}" y="${y+16}">${fmt(d.v)}</text>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${rows}</svg>`;
+}
+
+/* ---- monthly aggregations ---- */
+function monthlySeries(valFn,set){
+  const buckets=MONTHS.map(m=>({k:m,v:0}));
+  (set||orders).forEach(o=>{
+    if(o.status==='Cancelled')return;
+    const mi=(o.ordered.getMonth()-7+12)%12; // Aug=0
+    if(mi>=0&&mi<12)buckets[mi].v+=valFn(o);
+  });
+  return buckets.map(b=>({k:b.k,v:round2(b.v)}));
+}
+
+/* ============================================================= *
+ * 6. REUSABLE DATA TABLE                                        *
+ * ============================================================= */
+function DataTable(cfg){
+  // cfg: {columns:[{key,label,num,sortable,render,sortVal}], rows, pageSize, filters, searchKeys, onRow, exportName}
+  const state={page:1,sortKey:null,sortDir:1,q:'',filters:{},pageSize:cfg.pageSize||12};
+  const wrap=el('div','table-wrap');
+
+  // toolbar
+  const tb=el('div','table-toolbar');
+  const searchBox=el('div','tt-search',`<svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input placeholder="Search…"/>`);
+  tb.appendChild(searchBox);
+  (cfg.filters||[]).forEach(f=>{
+    const sel=el('select','filter-sel');
+    sel.innerHTML=`<option value="">${f.label}: All</option>`+f.options.map(o=>`<option value="${o}">${o}</option>`).join('');
+    sel.onchange=()=>{state.filters[f.key]=sel.value;state.page=1;render();};
+    tb.appendChild(sel);
+  });
+  const spacer=el('div','tt-spacer');tb.appendChild(spacer);
+  if(cfg.exportName){
+    const exp=el('button','btn sm',`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>CSV`);
+    exp.onclick=()=>exportCSV(cfg.exportName+'.csv',filtered(),cfg.columns.filter(c=>!c.noExport).map(c=>({label:c.label,val:c.sortVal||(r=>r[c.key])})));
+    tb.appendChild(exp);
+  }
+  const meta=el('div','tt-meta');tb.appendChild(meta);
+  wrap.appendChild(tb);
+
+  const scroll=el('div','tbl-scroll');
+  const table=el('table','data');
+  scroll.appendChild(table);wrap.appendChild(scroll);
+  const pager=el('div','pager');wrap.appendChild(pager);
+
+  $('input',searchBox).oninput=e=>{state.q=e.target.value.toLowerCase();state.page=1;render();};
+
+  function filtered(){
+    let rows=cfg.rows.slice();
+    if(state.q){rows=rows.filter(r=>(cfg.searchKeys||Object.keys(r)).some(k=>String(typeof k==='function'?k(r):r[k]).toLowerCase().includes(state.q)));}
+    (cfg.filters||[]).forEach(f=>{const val=state.filters[f.key];if(val)rows=rows.filter(r=>String(f.get?f.get(r):r[f.key])===val);});
+    if(state.sortKey){
+      const col=cfg.columns.find(c=>c.key===state.sortKey);
+      rows.sort((a,b)=>{let x=col.sortVal?col.sortVal(a):a[state.sortKey],y=col.sortVal?col.sortVal(b):b[state.sortKey];
+        if(x instanceof Date)x=x?x.getTime():0;if(y instanceof Date)y=y?y.getTime():0;
+        if(typeof x==='string')return x.localeCompare(y)*state.sortDir;
+        return ((x||0)-(y||0))*state.sortDir;});
+    }
+    return rows;
+  }
+  function render(){
+    const rows=filtered();
+    const pages=Math.max(1,Math.ceil(rows.length/state.pageSize));
+    if(state.page>pages)state.page=pages;
+    const start=(state.page-1)*state.pageSize;
+    const pageRows=rows.slice(start,start+state.pageSize);
+    // header
+    table.innerHTML='';
+    const thead=el('thead');const trh=el('tr');
+    cfg.columns.forEach(c=>{
+      const th=el('th',(c.num?'num ':'')+(c.sortable!==false?'sortable ':'')+(state.sortKey===c.key?(state.sortDir===1?'asc':'desc'):''),`${c.label}${c.sortable!==false?'<span class="arw"></span>':''}`);
+      if(c.sortable!==false)th.onclick=()=>{if(state.sortKey===c.key)state.sortDir*=-1;else{state.sortKey=c.key;state.sortDir=1;}render();};
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);table.appendChild(thead);
+    const tbody=el('tbody');
+    if(pageRows.length===0){
+      const tr=el('tr');const td=el('td',null,`<div class="empty"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 21V9"/></svg></div><h4>No matching records</h4><p>Adjust your search or filters to see results.</p></div>`);
+      td.colSpan=cfg.columns.length;tr.appendChild(td);tbody.appendChild(tr);
+    }else pageRows.forEach(r=>{
+      const tr=el('tr');
+      cfg.columns.forEach(c=>{const td=el('td',c.num?'num':null,c.render?c.render(r):(r[c.key]??'—'));tr.appendChild(td);});
+      if(cfg.onRow)tr.style.cursor='pointer',tr.onclick=e=>{if(e.target.closest('.mini-btn,button,a'))return;cfg.onRow(r);};
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    // pager
+    meta.textContent=`${rows.length} record${rows.length!==1?'s':''}`;
+    pager.innerHTML='';
+    const info=el('div','info',`Showing ${rows.length?start+1:0}–${Math.min(start+state.pageSize,rows.length)} of ${rows.length}`);
+    const pg=el('div','pages');
+    const mk=(lbl,p,dis,act)=>{const b=el('button','pg'+(act?' active':''),lbl);b.disabled=dis;b.onclick=()=>{state.page=p;render();};return b;};
+    pg.appendChild(mk('‹',state.page-1,state.page===1));
+    let list=[];for(let p=1;p<=pages;p++){if(p===1||p===pages||Math.abs(p-state.page)<=1)list.push(p);else if(list[list.length-1]!=='…')list.push('…');}
+    list.forEach(p=>p==='…'?pg.appendChild(el('span',null,'<span style="color:var(--text-3);padding:0 4px">…</span>')):pg.appendChild(mk(p,p,false,p===state.page)));
+    pg.appendChild(mk('›',state.page+1,state.page===pages));
+    pager.appendChild(info);pager.appendChild(pg);
+    // rebind action buttons
+    cfg.bind&&cfg.bind(wrap);
+  }
+  render();
+  return wrap;
+}
+
+/* ============================================================= *
+ * 6b. PAGES                                                     *
+ * ============================================================= */
+const pages={};
+
+/* ---------- DASHBOARD ---------- */
+let dashFilter={vendor:'',from:'',to:''};
+function dashFiltered(){
+  return orders.filter(o=>{
+    if(dashFilter.vendor && o.vendorId!==dashFilter.vendor) return false;
+    if(dashFilter.from && o.ordered < new Date(dashFilter.from)) return false;
+    if(dashFilter.to && o.ordered > new Date(dashFilter.to+'T23:59:59')) return false;
+    return true;
+  });
+}
+pages.dashboard=()=>{
+  const v=el('div');
+  const data=dashFiltered();
+  const valid=data.filter(o=>o.status!=='Cancelled');
+  const totalPO=data.length;
+  const pendingApprovals=data.filter(o=>['Pending Approval','Verified','Hold'].includes(o.status)).length;
+  const todayRecv=data.filter(o=>o.receivedDate&&Math.abs(o.receivedDate-today)<3*864e5).length;
+  const totalValue=valid.reduce((s,o)=>s+o.final,0);
+  const avgLanding=valid.length?valid.reduce((s,o)=>s+o.landingPct,0)/valid.length:0;
+  const avgMargin=valid.length?valid.reduce((s,o)=>s+o.gm,0)/valid.length:0;
+  const vset=dashFilter.vendor?vendors.filter(v=>v.id===dashFilter.vendor):vendors;
+  const avgTAT=vset.reduce((s,v)=>s+v.avgDelivery,0)/vset.length;
+  const totalSkus=valid.reduce((s,o)=>s+(o.skus?o.skus.length:1),0);
+
+  const kpis=[
+    ['Total Vendor Entries',totalPO,'',72,'file',null],
+    ['Pending Payment Approvals',pendingApprovals,'',55,'check',"go('approval')"],
+    ["Today's Received Orders",todayRecv,'',60,'truck',null],
+    ['SKUs Procured',totalSkus,'',65,'box',null],
+    ['Total Procurement Value',INR(totalValue),'',80,'wallet',null],
+    ['Average Landing Cost %',PCT(avgLanding),'',avgLanding,'trend',null],
+    ['Average Gross Margin %',PCT(avgMargin),'',avgMargin*2,'percent',null],
+    ['Avg Vendor Turnaround',avgTAT.toFixed(1)+' days','',50,'timer',null]
+  ];
+  const kpiIcons={file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',check:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',truck:'<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',box:'<path d="M21 8l-9-5-9 5 9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',wallet:'<path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><circle cx="16" cy="14" r="1.5"/>',trend:'<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',percent:'<line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>'};
+
+  const kpiHTML=kpis.map(k=>`
+    <div class="card kpi${k[5]?' clickable':''}" ${k[5]?`onclick="${k[5]}" title="Open approval queue"`:''}>
+      <div class="top"><span class="label">${k[0]}${k[5]?' <span class="go-hint">view →</span>':''}</span>
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${kpiIcons[k[4]]}</svg></div>
+      <div class="val">${k[1]}</div>
+      <div class="delta ${RS()>.5?'up':'down'}"><div class="bar"><i style="width:${Math.min(100,k[3])}%"></i></div>vs last month</div>
+    </div>`).join('');
+
+  // charts (all derived from the filtered set)
+  const monthlyVal=monthlySeries(o=>o.final,valid);
+  const vspend={};valid.forEach(o=>vspend[o.vendorId]=(vspend[o.vendorId]||0)+o.final);
+  const vendorSpend=Object.entries(vspend).map(([id,val])=>({k:vmap[id].name.split(' ')[0],v:round2(val)})).sort((a,b)=>b.v-a.v).slice(0,7);
+  const avgLandingByMonth=MONTHS.map(m=>{const os=valid.filter(o=>MONTHS[(o.ordered.getMonth()-7+12)%12]===m);return {k:m,v:os.length?round2(os.reduce((s,o)=>s+o.landingPct,0)/os.length):0};});
+  const avgMarginByMonth=MONTHS.map(m=>{const os=valid.filter(o=>MONTHS[(o.ordered.getMonth()-7+12)%12]===m);return {k:m,v:os.length?round2(os.reduce((s,o)=>s+o.gm,0)/os.length):0};});
+  const transportTrend=monthlySeries(o=>o.transport,valid);
+  const pendingTrend=MONTHS.map(m=>({k:m,v:data.filter(o=>['Pending Approval','Verified','Hold'].includes(o.status)&&MONTHS[(o.ordered.getMonth()-7+12)%12]===m).length}));
+  const vendorPerf={};valid.forEach(o=>{(vendorPerf[o.vendorId]=vendorPerf[o.vendorId]||[]).push(o.gm);});
+  const vendorPerfData=Object.entries(vendorPerf).map(([id,arr])=>({k:vmap[id].name.split(' ')[0],v:round2(arr.reduce((a,b)=>a+b,0)/arr.length)})).sort((a,b)=>b.v-a.v);
+
+  const activeFilter=dashFilter.vendor||dashFilter.from||dashFilter.to;
+  v.innerHTML=`
+    <div class="page-head">
+      <div><h1>Procurement Overview</h1><p>Real-time landing cost, margins and approvals${dashFilter.vendor?` · ${vmap[dashFilter.vendor].name}`:` across ${vendors.length} vendors`}.</p></div>
+      <div class="actions">
+        <button class="btn sm" onclick="go('reports')"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Reports</button>
+        <button class="btn primary sm" onclick="newVendorEntry()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>New Vendor Entry</button>
+      </div>
+    </div>
+
+    <div class="dash-filter card">
+      <div class="df-field"><label>Vendor</label>
+        <select id="dfVendor"><option value="">All vendors</option>${vendors.map(vn=>`<option value="${vn.id}" ${dashFilter.vendor===vn.id?'selected':''}>${vn.name}</option>`).join('')}</select></div>
+      <div class="df-field"><label>From</label><input type="date" id="dfFrom" value="${dashFilter.from}"/></div>
+      <div class="df-field"><label>To</label><input type="date" id="dfTo" value="${dashFilter.to}"/></div>
+      <div class="df-actions">
+        <button class="btn sm" id="dfApply">Apply</button>
+        <button class="btn sm ${activeFilter?'':'ghost'}" id="dfReset">Reset</button>
+        <button class="btn sm primary" id="dfDownload"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>Download</button>
+      </div>
+      <div class="df-count">${data.length} record${data.length!==1?'s':''}${activeFilter?' · filtered':''}</div>
+    </div>
+
+    <div class="grid kpi-grid">${kpiHTML}</div>
+
+    <div class="section">
+      <div class="charts-2">
+        <div class="panel"><div class="p-head"><h3>Monthly Procurement Value</h3><span class="muted">Aug 2025 – Jul 2026</span></div><div class="p-body">${barChart(monthlyVal)}</div></div>
+        <div class="panel"><div class="p-head"><h3>Vendor-wise Procurement</h3><span class="muted">Top 7</span></div><div class="p-body">${hbarChart(vendorSpend)}</div></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="charts-3">
+        <div class="panel"><div class="p-head"><h3>Landing Cost Trend</h3><span class="muted">avg % of sell</span></div><div class="p-body">${lineChart(avgLandingByMonth,{fmt:PCT})}</div></div>
+        <div class="panel"><div class="p-head"><h3>Gross Margin Trend</h3><span class="muted">avg %</span></div><div class="p-body">${lineChart(avgMarginByMonth,{fmt:PCT})}</div></div>
+        <div class="panel"><div class="p-head"><h3>Pending Approval Trend</h3><span class="muted">count</span></div><div class="p-body">${barChart(pendingTrend,{fmt:n=>n})}</div></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="charts-2">
+        <div class="panel"><div class="p-head"><h3>Vendor Performance</h3><span class="muted">avg margin %</span></div><div class="p-body">${hbarChart(vendorPerfData.length?vendorPerfData:[{k:'—',v:0}],{fmt:PCT})}</div></div>
+        <div class="panel"><div class="p-head"><h3>Transportation Cost Trend</h3><span class="muted">monthly ₹</span></div><div class="p-body">${lineChart(transportTrend)}</div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="charts-3" id="activityRow"></div>
+    </div>`;
+
+  // wire dashboard filter controls
+  const applyDash=()=>{dashFilter.vendor=$('#dfVendor',v).value;dashFilter.from=$('#dfFrom',v).value;dashFilter.to=$('#dfTo',v).value;go('dashboard');};
+  setTimeout(()=>{
+    $('#dfApply',v).onclick=applyDash;
+    $('#dfVendor',v).onchange=applyDash;
+    $('#dfReset',v).onclick=()=>{dashFilter={vendor:'',from:'',to:''};go('dashboard');};
+    $('#dfDownload',v).onclick=()=>exportCSV('dashboard_export.csv',data,[
+      {label:'Entry',val:o=>o.id},{label:'Vendor',val:o=>vmap[o.vendorId].name},{label:'SKUs',val:o=>o.skus?o.skus.length:1},
+      {label:'Qty',val:o=>o.qty},{label:'Ordered',val:o=>fmtDate(o.ordered)},{label:'Received',val:o=>fmtDate(o.receivedDate)},
+      {label:'Landing',val:o=>o.landing},{label:'Selling',val:o=>o.sellingPrice},{label:'Margin%',val:o=>o.gm},{label:'Status',val:o=>o.status}]);
+  },0);
+
+  // recent activity (respects filter)
+  const latestEntries=data.filter(o=>o.receivedDate).sort((a,b)=>b.receivedDate-a.receivedDate).slice(0,5);
+  const latestApproved=data.filter(o=>o.approvalDate).sort((a,b)=>b.approvalDate-a.approvalDate).slice(0,5);
+  const latestReceived=data.filter(o=>o.receivedDate).sort((a,b)=>b.receivedDate-a.receivedDate).slice(0,5);
+  const actPanel=(title,items,render)=>`<div class="panel"><div class="p-head"><h3>${title}</h3></div><div class="p-body"><div class="act-list">${items.map(render).join('')}</div></div></div>`;
+  setTimeout(()=>{
+    $('#activityRow',v).innerHTML=
+      actPanel('Latest Vendor Entries',latestEntries,o=>`<div class="act-item"><div class="av"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></div><div class="txt"><b>${o.id}</b><p>${vmap[o.vendorId].name}</p></div><span class="amt">${INR(o.final)}</span></div>`)+
+      actPanel('Latest Approved Payments',latestApproved,o=>`<div class="act-item"><div class="av"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/></svg></div><div class="txt"><b>${o.id}</b><p>Approved by ${o.approver}</p></div><span class="when">${fmtShort(o.approvalDate)}</span></div>`)+
+      actPanel('Latest Received Orders',latestReceived,o=>`<div class="act-item"><div class="av"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></div><div class="txt"><b>${o.productName}</b><p>${o.qty} units · ${vmap[o.vendorId].name}</p></div><span class="when">${fmtShort(o.receivedDate)}</span></div>`);
+  },0);
+  return v;
+};
+
+/* ---------- VENDOR ENTRIES ---------- */
+pages.entries=()=>{
+  const v=el('div');
+  v.innerHTML=`<div class="page-head"><div><h1>Vendor Entries</h1><p>Every procurement record. Order numbers are created internally and can be updated here.</p></div>
+    <div class="actions"><button class="btn primary sm" onclick="newVendorEntry()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Add Vendor Entry</button></div></div>`;
+  const cols=[
+    {key:'id',label:'Order No',render:r=>`<span class="mono strong">${r.id}</span><br><span class="mono" style="font-size:11px;color:var(--text-3)">${r.coId}</span>`,sortVal:r=>r.id},
+    {key:'invoiceNo',label:'Invoice No',render:r=>`<span class="mono">${r.invoiceNo||'—'}</span>`},
+    {key:'vendor',label:'Vendor',render:r=>vmap[r.vendorId].name,sortVal:r=>vmap[r.vendorId].name},
+    {key:'skuc',label:'SKUs',num:true,render:r=>`${r.skus?r.skus.length:1}`,sortVal:r=>r.skus?r.skus.length:1},
+    {key:'qty',label:'Total Qty',num:true,sortVal:r=>r.qty},
+    {key:'landing',label:'Landing Cost',num:true,render:r=>INR2(r.landing),sortVal:r=>r.landing},
+    {key:'sellingPrice',label:'Selling',num:true,render:r=>INR2(r.sellingPrice),sortVal:r=>r.sellingPrice},
+    {key:'gm',label:'Margin',num:true,render:r=>`<span class="strong">${PCT(r.gm)}</span>`,sortVal:r=>r.gm},
+    {key:'status',label:'Status',render:r=>statusChip(r.status)},
+    {key:'act',label:'',sortable:false,noExport:true,render:r=>`<div class="row-actions">
+        <button class="mini-btn" data-view="${r.id}" title="View"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button class="mini-btn" data-edit="${r.id}" title="Edit / update order no"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+      </div>`}
+  ];
+  const t=DataTable({columns:cols,rows:orders,pageSize:12,exportName:'vendor_entries',
+    searchKeys:['id','coId','invoiceNo','sku','productName',r=>vmap[r.vendorId].name],
+    filters:[
+      {key:'status',label:'Status',options:['PO Raised','Waiting for Vendor','Received','Verified','Pending Approval','Approved','Paid','Rejected','Cancelled','Hold']},
+      {key:'vendorId',label:'Vendor',options:vendors.map(v=>v.id),get:r=>r.vendorId},
+      {key:'paymentStatus',label:'Payment',options:['Unpaid','Payment Ready','Paid']}
+    ],
+    onRow:r=>viewPO(r.id),
+    bind:wrap=>{
+      $$('[data-view]',wrap).forEach(b=>b.onclick=()=>viewPO(b.dataset.view));
+      $$('[data-edit]',wrap).forEach(b=>b.onclick=()=>editPO(b.dataset.edit));
+    }});
+  $$('.filter-sel',t)[1].querySelectorAll('option').forEach(o=>{if(o.value)o.textContent=vmap[o.value].name;});
+  v.appendChild(t);
+  return v;
+};
+
+/* ---------- PAYMENT APPROVAL ---------- */
+pages.approval=()=>{
+  const v=el('div');
+  const queue=orders.filter(o=>['Pending Approval','Verified','Hold'].includes(o.status));
+  v.innerHTML=`<div class="page-head"><div><h1>Payment Approval</h1><p>${queue.length} entries awaiting admin review. Open any record to verify margin and approve payment.</p></div></div>`;
+  // workflow strip
+  const wf=el('div','panel');
+  wf.innerHTML=`<div class="p-body"><div class="workflow">${
+    ['Finance Entry','Verification','Admin Review','Approval','Payment Ready','Paid'].map((s,i,a)=>
+      `<div class="wf-step"><div class="wf-node ${i<2?'done':i===2?'current':''}"><div class="cir">${i<2?'✓':i+1}</div><div class="t">${s}</div></div>${i<a.length-1?`<div class="wf-line ${i<1?'done':''}"></div>`:''}</div>`).join('')
+  }</div></div>`;
+  v.appendChild(wf);
+  const gap=el('div');gap.style.height='20px';v.appendChild(gap);
+
+  const cols=[
+    {key:'id',label:'PO Number',render:r=>`<span class="mono strong">${r.id}</span>`},
+    {key:'vendor',label:'Vendor',render:r=>vmap[r.vendorId].name,sortVal:r=>vmap[r.vendorId].name},
+    {key:'invoiceNo',label:'Invoice',render:r=>`<span class="mono">${r.invoiceNo||'—'}</span>`},
+    {key:'final',label:'Payable',num:true,render:r=>INR2(r.final),sortVal:r=>r.final},
+    {key:'gm',label:'Margin',num:true,render:r=>`<span class="strong">${PCT(r.gm)}</span>`,sortVal:r=>r.gm},
+    {key:'dueDate',label:'Due Date',render:r=>fmtShort(r.dueDate),sortVal:r=>r.dueDate||new Date(0)},
+    {key:'status',label:'Status',render:r=>statusChip(r.status)},
+    {key:'act',label:'Action',sortable:false,noExport:true,render:r=>`<div class="row-actions"><button class="btn sm primary" data-approve="${r.id}">Review</button></div>`}
+  ];
+  const t=DataTable({columns:cols,rows:queue,pageSize:10,exportName:'approval_queue',
+    searchKeys:['id','invoiceNo',r=>vmap[r.vendorId].name],
+    filters:[{key:'status',label:'Status',options:['Verified','Pending Approval','Hold']}],
+    onRow:r=>openApproval(r.id),
+    bind:wrap=>$$('[data-approve]',wrap).forEach(b=>b.onclick=()=>openApproval(b.dataset.approve))});
+  v.appendChild(t);
+  return v;
+};
+
+/* ---------- VENDORS ---------- */
+pages.vendors=()=>{
+  const v=el('div');
+  v.innerHTML=`<div class="page-head"><div><h1>Vendors</h1><p>${vendors.length} card suppliers with performance and payment terms.</p></div>
+    <div class="actions"><button class="btn primary sm" onclick="createVendor()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Create Vendor</button></div></div>`;
+  const grid=el('div','vendor-grid');
+  vendors.forEach(vn=>{
+    const initials=vn.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+    const card=el('div','card vendor-card');
+    card.innerHTML=`
+      <div class="vc-top">
+        <div class="vc-logo">${initials}</div>
+        <div style="min-width:0">
+          <div class="vc-name">${vn.name}</div>
+          <div class="vc-meta">${vn.id} · ${vn.city}</div>
+        </div>
+        <span class="chip ${vn.status==='Active'?'st-verified':'st-cancelled'}" style="margin-left:auto"><span class="d"></span>${vn.status}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-2);display:flex;flex-direction:column;gap:3px">
+        <span>${vn.person} · ${vn.phone}</span>
+        <span class="mono" style="font-size:11px;color:var(--text-3)">GST ${vn.gst}</span>
+      </div>
+      <div class="vc-stats">
+        <div class="vc-stat"><div class="n">${INR(vn.totalProcurement)}</div><div class="l">Total Procurement</div></div>
+        <div class="vc-stat"><div class="n">${PCT(vn.avgMargin)}</div><div class="l">Avg Margin</div></div>
+        <div class="vc-stat"><div class="n">${vn.ordersCompleted}</div><div class="l">Completed</div></div>
+        <div class="vc-stat"><div class="n">${vn.avgDelivery}d</div><div class="l">Avg Delivery</div></div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border)">
+        <span class="rating">${[1,2,3,4,5].map(s=>`<span class="s ${s<=vn.rating?'':'off'}">★</span>`).join('')}</span>
+        <span class="tag">${vn.terms}</span>
+      </div>`;
+    card.style.cursor='pointer';
+    card.onclick=()=>viewVendor(vn.id);
+    grid.appendChild(card);
+  });
+  v.appendChild(grid);
+  return v;
+};
+
+/* ---------- ANALYTICS ---------- */
+pages.analytics=()=>{
+  const v=el('div');
+  const valid=orders.filter(o=>o.status!=='Cancelled');
+  const totalProc=valid.reduce((s,o)=>s+o.final,0);
+  const vendorSpend=valid.reduce((s,o)=>s+o.gross,0);
+  const transport=valid.reduce((s,o)=>s+o.transport,0);
+  const handling=valid.reduce((s,o)=>s+o.handling,0);
+  const packaging=valid.reduce((s,o)=>s+o.packaging,0);
+  const gst=valid.reduce((s,o)=>s+o.gstAmt,0);
+  const avgLanding=valid.reduce((s,o)=>s+o.landingPerUnit,0)/valid.length;
+  const avgSelling=valid.reduce((s,o)=>s+o.sellingPrice/o.qty,0)/valid.length;
+  const avgMargin=valid.reduce((s,o)=>s+o.gm,0)/valid.length;
+  const byVendorMargin=[...vendors].sort((a,b)=>b.avgMargin-a.avgMargin);
+  const byVendorCount={};valid.forEach(o=>byVendorCount[o.vendorId]=(byVendorCount[o.vendorId]||0)+1);
+  const mostOrdered=vendors.reduce((a,b)=>(byVendorCount[a.id]||0)>=(byVendorCount[b.id]||0)?a:b);
+  const mostDelayed=[...vendors].sort((a,b)=>b.avgDelivery-a.avgDelivery)[0];
+
+  const cards=[
+    ['Total Procurement',INR(totalProc)],['Vendor Spend',INR(vendorSpend)],['Transportation Spend',INR(transport)],
+    ['Handling Spend',INR(handling)],['Packaging Spend',INR(packaging)],['GST Paid',INR(gst)],
+    ['Avg Landing Cost / unit',INR2(avgLanding)],['Avg Selling / unit',INR2(avgSelling)],['Avg Gross Margin',PCT(avgMargin)],
+    ['Highest Margin Vendor',byVendorMargin[0].name.split(' ')[0]],['Lowest Margin Vendor',byVendorMargin[byVendorMargin.length-1].name.split(' ')[0]],
+    ['Most Delayed Vendor',mostDelayed.name.split(' ')[0]],['Most Ordered Vendor',mostOrdered.name.split(' ')[0]]
+  ];
+  v.innerHTML=`<div class="page-head"><div><h1>Analytics</h1><p>Power BI-ready procurement analytics across vendors and time.</p></div>
+    <div class="actions"><button class="btn sm" onclick="toast('Power BI','Dataset scheme validated & ready to publish')"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="12" y="6" width="3" height="12"/><rect x="17" y="13" width="3" height="5"/></svg>Publish to Power BI</button></div></div>
+    <div class="grid" style="grid-template-columns:repeat(4,1fr)">${cards.map(c=>`<div class="card kpi" style="min-height:86px"><span class="label">${c[0]}</span><div class="val" style="font-size:22px">${c[1]}</div></div>`).join('')}</div>`;
+
+  const section=el('div','section');
+  const chartsA=el('div','charts-2');
+  chartsA.innerHTML=`
+    <div class="panel"><div class="p-head"><h3>Vendor Comparison</h3><span class="muted">procurement ₹</span></div><div class="p-body">${hbarChart([...vendors].sort((a,b)=>b.totalProcurement-a.totalProcurement).map(v=>({k:v.name.split(' ')[0],v:v.totalProcurement})))}</div></div>
+    <div class="panel"><div class="p-head"><h3>Monthly Procurement</h3></div><div class="p-body">${barChart(monthlySeries(o=>o.final))}</div></div>`;
+  section.appendChild(chartsA);
+  v.appendChild(section);
+
+  const avgMarginByMonth=MONTHS.map(m=>{const os=orders.filter(o=>o.status!=='Cancelled'&&MONTHS[(o.ordered.getMonth()-7+12)%12]===m);return {k:m,v:os.length?round2(os.reduce((s,o)=>s+o.gm,0)/os.length):0};});
+  const section2=el('div','section');
+  const chartsB=el('div','charts-3');
+  chartsB.innerHTML=`
+    <div class="panel"><div class="p-head"><h3>Monthly Margin</h3></div><div class="p-body">${lineChart(avgMarginByMonth,{fmt:PCT})}</div></div>
+    <div class="panel"><div class="p-head"><h3>GST Distribution</h3><span class="muted">by slab</span></div><div class="p-body">${barChart([5,12,18].map(g=>({k:g+'%',v:valid.filter(o=>o.gstPct===g).reduce((s,o)=>s+o.gstAmt,0)})))}</div></div>
+    <div class="panel"><div class="p-head"><h3>Transportation Trend</h3></div><div class="p-body">${lineChart(monthlySeries(o=>o.transport))}</div></div>`;
+  section2.appendChild(chartsB);
+  v.appendChild(section2);
+
+  // landing cost distribution (histogram)
+  const buckets=[0,20,40,60,80,100,200];
+  const dist=buckets.slice(0,-1).map((b,i)=>({k:b+'–'+buckets[i+1]+'%',v:valid.filter(o=>o.landingPct>=b&&o.landingPct<buckets[i+1]).length}));
+  const section3=el('div','section');
+  const chartsC=el('div','charts-2');
+  chartsC.innerHTML=`
+    <div class="panel"><div class="p-head"><h3>Landing Cost Distribution</h3><span class="muted">count of orders</span></div><div class="p-body">${barChart(dist,{fmt:n=>n})}</div></div>
+    <div class="panel"><div class="p-head"><h3>Average Delivery Time</h3><span class="muted">days per vendor</span></div><div class="p-body">${hbarChart([...vendors].sort((a,b)=>a.avgDelivery-b.avgDelivery).map(v=>({k:v.name.split(' ')[0],v:v.avgDelivery})),{fmt:n=>n+'d'})}</div></div>`;
+  section3.appendChild(chartsC);
+  v.appendChild(section3);
+  return v;
+};
+
+/* ---------- REPORTS ---------- */
+pages.reports=()=>{
+  const v=el('div');
+  v.innerHTML=`<div class="page-head"><div><h1>Reports</h1><p>Generate and export procurement, margin, GST and payment reports.</p></div></div>`;
+  const reports=[
+    ['Daily Report','Orders received and entered today.'],
+    ['Weekly Report','Rolling 7-day procurement summary.'],
+    ['Monthly Report','Full month landing cost & margin.'],
+    ['Vendor Report','Spend and performance per vendor.'],
+    ['Margin Report','Gross profit and margin by order.'],
+    ['GST Report','Input GST by slab for filing.'],
+    ['Payment Report','Approved, pending and paid ledger.'],
+    ['Procurement Report','Complete PO register.'],
+    ['Inventory Landing Cost Report','Per-SKU landed cost basis.']
+  ];
+  const grid=el('div','report-grid');
+  reports.forEach(([t,d])=>{
+    const c=el('div','card report-card');
+    c.innerHTML=`
+      <div class="rc-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg></div>
+      <div><h4>${t}</h4></div>
+      <p>${d}</p>
+      <div class="rc-actions">
+        <button class="btn sm" data-csv>Excel / CSV</button>
+        <button class="btn sm" data-print>Print / PDF</button>
+      </div>`;
+    $('[data-csv]',c).onclick=()=>exportCSV(t.toLowerCase().replace(/[^a-z]/g,'_')+'.csv',orders,[
+      {label:'PO',val:o=>o.id},{label:'Vendor',val:o=>vmap[o.vendorId].name},{label:'Product',val:o=>o.productName},
+      {label:'Qty',val:o=>o.qty},{label:'Landing Cost',val:o=>o.landing},{label:'Selling',val:o=>o.sellingPrice},
+      {label:'Gross Profit',val:o=>o.gp},{label:'Margin %',val:o=>o.gm},{label:'GST',val:o=>o.gstAmt},{label:'Status',val:o=>o.status}
+    ]);
+    $('[data-print]',c).onclick=()=>window.print();
+    grid.appendChild(c);
+  });
+  v.appendChild(grid);
+  return v;
+};
+
+/* ---------- SETTINGS ---------- */
+pages.settings=()=>{
+  const v=el('div');
+  v.innerHTML=`<div class="page-head"><div><h1>Settings</h1><p>Defaults used across vendor entries, calculations and approvals.</p></div></div>`;
+  const grid=el('div','settings-grid');
+  grid.innerHTML=`
+    <div class="settings-nav">
+      <a class="active">Financial Defaults</a><a>Approval Rules</a><a>Vendor Categories</a><a>Organisation</a>
+    </div>
+    <div class="settings-body">
+      <div class="form-grid" style="grid-template-columns:repeat(2,1fr)">
+        <div class="field"><label>Default GST %</label><select><option>5%</option><option selected>18%</option><option>12%</option><option>28%</option></select></div>
+        <div class="field"><label>Currency</label><select><option selected>INR (₹)</option><option>USD ($)</option></select></div>
+        <div class="field"><label>Margin Threshold (alert below)</label><input value="12%"/></div>
+        <div class="field"><label>Financial Year</label><select><option selected>FY 2025-26</option><option>FY 2024-25</option></select></div>
+        <div class="form-section-title">Additional Charge Defaults <span class="hint" style="text-transform:none;letter-spacing:0">cost per piece</span></div>
+        ${CHARGE_TYPES.map(t=>{const [lo,hi]=CHARGE_DEFAULT_PP[t];return `<div class="field"><label>${t}</label><div class="prefix-wrap"><span class="cur">₹</span><input value="${round2((lo+hi)/2)}"/></div></div>`;}).join('')}
+        <div class="field col-2"><label>Approval Rules</label><textarea>Auto-flag margin below 12%. Require admin sign-off for payable > ₹1,00,000. Verify every received SKU before approval. Lock editing after payment.</textarea></div>
+      </div>
+      <div style="margin-top:20px;display:flex;justify-content:flex-end;gap:9px">
+        <button class="btn">Reset</button>
+        <button class="btn primary" onclick="toast('Settings saved','Defaults updated for all future entries')">Save Changes</button>
+      </div>
+    </div>`;
+  v.appendChild(grid);
+  return v;
+};
+
+/* ============================================================= *
+ * 6c. DETAIL / FORM / APPROVAL FLOWS                            *
+ * ============================================================= */
+function viewPO(id){
+  const o=omap[id];const vn=vmap[o.vendorId];
+  const n=el('div');
+  const stepIndex=Math.max(0,STATUS_FLOW.indexOf(o.status));
+  n.innerHTML=`
+    <div class="d-head"><div><h3>${o.id}</h3><div class="sub">${o.coId} · ${vn.name}</div></div>
+      <div style="display:flex;gap:8px;align-items:center">${statusChip(o.status)}<button class="x-btn" data-close><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div></div>
+    <div class="d-body">
+      <div class="detail-grid">
+        <div class="dl"><dt>SKUs / Lines</dt><dd>${(o.skus?o.skus.length:1)} · ${o.qty} units total</dd></div>
+        <div class="dl"><dt>Customer Order</dt><dd class="mono">${o.coId}</dd></div>
+        <div class="dl"><dt>Ordered</dt><dd>${fmtDate(o.ordered)}</dd></div>
+        <div class="dl"><dt>Received</dt><dd>${fmtDate(o.receivedDate)}</dd></div>
+        <div class="dl"><dt>Invoice</dt><dd class="mono">${o.invoiceNo||'—'}</dd></div>
+        <div class="dl"><dt>Due Date</dt><dd>${fmtDate(o.dueDate)}</dd></div>
+      </div>
+
+      <div class="d-block"><h4>SKUs (${o.skus?o.skus.length:1})</h4>
+        <div class="sku-detail-list">${(o.skus||[]).map(s=>{const cl=computeSku(s);const chg=Object.entries(cl.chargeTotals).filter(([,v])=>v>0);return `
+          <div class="sku-detail">
+            <div class="sd-top"><b>${s.productName||'—'}</b><span class="mono">${s.sku||''}</span></div>
+            <div class="sd-row"><span>${s.qty} × ${INR2(s.rate)}</span><span class="mono">${INR2(cl.base)}</span></div>
+            ${s.packaging?`<div class="sd-row"><span>Packaging (flat)</span><span class="mono">${INR2(s.packaging)}</span></div>`:''}
+            ${chg.map(([t,v])=>{const pp=(s.charges.find(c=>c.type===t)||{}).perPiece||0;return `<div class="sd-row sub"><span>${t} <i>@ ${INR2(pp)}/pc × ${s.qty}</i></span><span class="mono">${INR2(v)}</span></div>`;}).join('')}
+            <div class="sd-row foot"><span>Line landing</span><span class="mono">${INR2(cl.lineGross)}</span></div>
+            <div class="sd-row foot"><span>Selling ${INR2(s.sellingPrice)}/unit · margin ${PCT(cl.lineGm)}</span><span class="mono">${INR2(cl.sell)}</span></div>
+          </div>`;}).join('')}
+        </div>
+      </div>
+
+      ${o.deliveryNote?`<div class="d-block"><h4>Delivery Note</h4><div class="delivery-note">${o.deliveryNote}</div></div>`:''}
+
+      <div class="d-block"><h4>Landing Cost Breakdown</h4>
+        <div class="invoice-mini">
+          <div class="im-head"><b>Cost Sheet</b><span class="mono" style="font-size:11px;color:var(--text-3)">${o.invoiceNo||o.id}</span></div>
+          <table>
+            <tr><td>Base (Σ Qty × Rate)</td><td>${INR2(o.total)}</td></tr>
+            <tr><td>Packaging</td><td>${INR2(o.packaging)}</td></tr>
+            <tr><td>Transportation</td><td>${INR2(o.transport)}</td></tr>
+            <tr><td>Handling</td><td>${INR2(o.handling)}</td></tr>
+            <tr><td>Other additional charges</td><td>${INR2(o.addl)}</td></tr>
+            <tr><td>Gross amount</td><td>${INR2(o.gross)}</td></tr>
+            <tr><td>GST @ ${o.gstPct}%</td><td>${INR2(o.gstAmt)}</td></tr>
+            <tr><td>Landing cost (final)</td><td>${INR2(o.landing)}</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="d-block"><h4>Profit Analysis</h4>
+        <div class="detail-grid">
+          <div class="dl"><dt>Landing / unit</dt><dd class="mono">${INR2(o.landingPerUnit)}</dd></div>
+          <div class="dl"><dt>Selling price</dt><dd class="mono">${INR2(o.sellingPrice)}</dd></div>
+          <div class="dl"><dt>Gross profit</dt><dd class="mono">${INR2(o.gp)}</dd></div>
+          <div class="dl"><dt>Gross margin</dt><dd class="mono strong">${PCT(o.gm)}</dd></div>
+        </div>
+      </div>
+
+      <div class="d-block"><h4>Workflow</h4>
+        <div class="workflow">${STATUS_FLOW.map((s,i,a)=>`<div class="wf-step"><div class="wf-node ${i<stepIndex?'done':i===stepIndex?'current':''}"><div class="cir">${i<stepIndex?'✓':i+1}</div><div class="t">${s}</div></div>${i<a.length-1?`<div class="wf-line ${i<stepIndex?'done':''}"></div>`:''}</div>`).join('')}</div>
+      </div>
+
+      <div class="d-block"><h4>Audit</h4>
+        <div class="detail-grid">
+          <div class="dl"><dt>Created By</dt><dd>${o.createdBy}</dd></div>
+          <div class="dl"><dt>Approved By</dt><dd>${o.approvalDate?o.approver:'—'}</dd></div>
+          <div class="dl"><dt>Created Date</dt><dd>${fmtDate(o.createdDate)}</dd></div>
+          <div class="dl"><dt>Modified</dt><dd>${fmtDate(o.modifiedDate)}</dd></div>
+        </div>
+      </div>
+    </div>
+    <div class="d-foot"><button class="btn" data-close>Close</button>
+      ${['Pending Approval','Verified','Hold'].includes(o.status)?`<button class="btn primary" id="toApprove">Review & Approve</button>`:`<button class="btn" onclick="editPO('${o.id}')">Edit</button>`}
+    </div>`;
+  const d=openDrawer(n);
+  const ta=$('#toApprove',d);if(ta)ta.onclick=()=>{closeDrawer();setTimeout(()=>openApproval(o.id),240);};
+}
+
+function viewVendor(id){
+  const vn=vmap[id];
+  const os=orders.filter(o=>o.vendorId===id);
+  const n=el('div');
+  n.innerHTML=`
+    <div class="d-head"><div><h3>${vn.name}</h3><div class="sub">${vn.id} · ${vn.city}</div></div><button class="x-btn" data-close><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="d-body">
+      <div class="detail-grid">
+        <div class="dl"><dt>Contact Person</dt><dd>${vn.person}</dd></div>
+        <div class="dl"><dt>Phone</dt><dd class="mono">${vn.phone}</dd></div>
+        <div class="dl"><dt>Email</dt><dd>${vn.email}</dd></div>
+        <div class="dl"><dt>Payment Terms</dt><dd>${vn.terms}</dd></div>
+        <div class="dl"><dt>GST Number</dt><dd class="mono">${vn.gst}</dd></div>
+        <div class="dl"><dt>PAN</dt><dd class="mono">${vn.pan}</dd></div>
+        <div class="dl"><dt>Address</dt><dd>${vn.address}</dd></div>
+        <div class="dl"><dt>Rating</dt><dd class="rating">${[1,2,3,4,5].map(s=>`<span class="s ${s<=vn.rating?'':'off'}">★</span>`).join('')}</dd></div>
+      </div>
+      <div class="d-block"><h4>Performance</h4>
+        <div class="detail-grid">
+          <div class="dl"><dt>Total Procurement</dt><dd class="mono">${INR(vn.totalProcurement)}</dd></div>
+          <div class="dl"><dt>Average Margin</dt><dd class="mono">${PCT(vn.avgMargin)}</dd></div>
+          <div class="dl"><dt>Orders Completed</dt><dd>${vn.ordersCompleted}</dd></div>
+          <div class="dl"><dt>Pending Orders</dt><dd>${vn.pendingOrders}</dd></div>
+          <div class="dl"><dt>Avg Delivery Time</dt><dd>${vn.avgDelivery} days</dd></div>
+          <div class="dl"><dt>Status</dt><dd>${vn.status}</dd></div>
+        </div>
+      </div>
+      <div class="d-block"><h4>Recent Orders (${os.length})</h4>
+        <div class="act-list">${os.slice(0,6).map(o=>`<div class="act-item"><div class="txt"><b>${o.id}</b><p>${o.productName} · ${o.qty} units</p></div>${statusChip(o.status)}<span class="amt">${INR(o.final)}</span></div>`).join('')}</div>
+      </div>
+    </div>
+    <div class="d-foot"><button class="btn" data-close>Close</button><button class="btn primary" onclick="toast('Vendor','Edit vendor is available in production build')">Edit Vendor</button></div>`;
+  openDrawer(n);
+}
+
+/* ---- Payment approval drawer with actions ---- */
+function openApproval(id){
+  const o=omap[id];const vn=vmap[o.vendorId];
+  const stepIndex=Math.max(0,STATUS_FLOW.indexOf(o.status));
+  const n=el('div');
+  const lowMargin=o.gm<12;
+  n.innerHTML=`
+    <div class="d-head"><div><h3>Approve Payment</h3><div class="sub">${o.id} · ${vn.name}</div></div><button class="x-btn" data-close><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="d-body">
+      <div class="workflow" style="margin-bottom:20px">${['Finance Entry','Verification','Admin Review','Approval','Payment Ready','Paid'].map((s,i,a)=>`<div class="wf-step"><div class="wf-node ${i<3?'done':i===3?'current':''}"><div class="cir">${i<3?'✓':i+1}</div><div class="t">${s}</div></div>${i<a.length-1?`<div class="wf-line ${i<2?'done':''}"></div>`:''}</div>`).join('')}</div>
+
+      <div class="invoice-mini"><div class="im-head"><b>Invoice ${o.invoiceNo||''}</b><span class="mono" style="font-size:11px;color:var(--text-3)">${fmtDate(o.invoiceDate)}</span></div>
+        <table>
+          <tr><td>${o.skus?o.skus.length:1} SKU line(s) · ${o.qty} units</td><td>${INR2(o.total)}</td></tr>
+          <tr><td>Packaging & additional charges</td><td>${INR2(round2(o.extra))}</td></tr>
+          <tr><td>GST @ ${o.gstPct}%</td><td>${INR2(o.gstAmt)}</td></tr>
+          <tr><td>Total Payable</td><td>${INR2(o.final)}</td></tr>
+        </table>
+      </div>
+
+      <div class="d-block"><h4>Received Details — verify each SKU</h4>
+        <p class="rc-note">Tick every line to confirm goods were received as invoiced. Approval unlocks only when all are checked.</p>
+        <div class="recv-check">${(o.skus||[]).map((s,i)=>`<label class="rc-item"><input type="checkbox" class="rc-box" data-i="${i}"/><span class="rc-body"><b>${s.productName||'—'}</b><span class="mono">${s.sku||''}</span><span class="rc-qty">${s.qty} units · ${INR2(computeSku(s).lineGross)}</span></span></label>`).join('')}</div>
+      </div>
+
+      ${o.deliveryNote?`<div class="d-block"><h4>Delivery Note</h4><div class="delivery-note">${o.deliveryNote}</div></div>`:''}
+
+      <div class="d-block"><h4>Margin Analysis</h4>
+        <div class="detail-grid">
+          <div class="dl"><dt>Landing / unit</dt><dd class="mono">${INR2(o.landingPerUnit)}</dd></div>
+          <div class="dl"><dt>Selling price</dt><dd class="mono">${INR2(o.sellingPrice)}</dd></div>
+          <div class="dl"><dt>Gross profit</dt><dd class="mono">${INR2(o.gp)}</dd></div>
+          <div class="dl"><dt>Gross margin</dt><dd class="mono strong">${PCT(o.gm)}</dd></div>
+        </div>
+        ${lowMargin?`<div style="margin-top:12px;padding:10px 12px;border:1px dashed var(--border-strong);border-radius:8px;font-size:12px;color:var(--text-2)"><b>Below threshold.</b> Margin is under the 12% policy limit — review before approving.</div>`:''}
+      </div>
+
+      <div class="d-block"><h4>Approval History</h4>
+        <div class="timeline">
+          <div class="tl-item hi"><div class="tl-t">Finance entry created</div><div class="tl-m">by ${o.createdBy}</div><div class="tl-time">${fmtDate(o.receivedDate)}</div></div>
+          <div class="tl-item hi"><div class="tl-t">Cost verified</div><div class="tl-m">Landing cost reconciled with invoice</div><div class="tl-time">${fmtDate(o.receivedDate)}</div></div>
+          <div class="tl-item"><div class="tl-t">Awaiting admin review</div><div class="tl-m">Pending your decision</div><div class="tl-time">now</div></div>
+        </div>
+      </div>
+
+      <div class="d-block"><h4>Comments & Internal Notes</h4>
+        <div class="comment-box"><textarea id="apprNote" placeholder="Add an internal note for this approval…"></textarea></div>
+      </div>
+    </div>
+    <div class="d-foot" style="flex-wrap:wrap">
+      <button class="btn" id="btnHold">Hold</button>
+      <button class="btn" id="btnChanges">Request Changes</button>
+      <button class="btn danger" id="btnReject">Reject</button>
+      <button class="btn primary" id="btnApprove" style="margin-left:auto">Approve Payment</button>
+    </div>`;
+  const d=openDrawer(n);
+  const apply=(status,pay,admin,msg)=>{
+    o.status=status;o.paymentStatus=pay;o.adminApproval=admin;o.modifiedDate=today;
+    if(status==='Approved'){o.approvalDate=today;o.locked=true;}
+    recomputeVendor(o.vendorId);
+    closeDrawer();toast(msg.t,msg.m);setTimeout(()=>go(currentPage),240);
+  };
+  // received-details gate
+  const boxes=$$('.rc-box',d);
+  const approveBtn=$('#btnApprove',d);
+  const syncGate=()=>{const all=boxes.length>0&&boxes.every(b=>b.checked);approveBtn.disabled=!all;approveBtn.title=all?'':'Verify every received SKU first';};
+  boxes.forEach(b=>b.onchange=syncGate);
+  syncGate();
+  approveBtn.onclick=()=>{if(approveBtn.disabled)return;confirmDialog('Approve payment?',`Approve ${INR2(o.final)} payable to ${vn.name}. Editing will be locked.`,'Approve',
+    ()=>apply('Approved','Payment Ready','Approved',{t:'Payment approved',m:o.id+' is now payment-ready'}));};
+  $('#btnReject',d).onclick=()=>confirmDialog('Reject entry?',`This will reject ${o.id} and return it to finance.`,'Reject',
+    ()=>apply('Rejected','Unpaid','Rejected',{t:'Entry rejected',m:o.id+' returned to finance'}),true);
+  $('#btnHold',d).onclick=()=>apply('Hold','Unpaid','On Hold',{t:'Placed on hold',m:o.id+' held for review'});
+  $('#btnChanges',d).onclick=()=>apply('Received','Unpaid','Changes Requested',{t:'Changes requested',m:'Sent back to finance for edits'});
+}
+function recomputeVendor(vid){
+  const vn=vmap[vid];const os=orders.filter(o=>o.vendorId===vid);
+  vn.ordersCompleted=os.filter(o=>['Paid','Approved'].includes(o.status)).length;
+  vn.pendingOrders=os.filter(o=>['PO Raised','Waiting for Vendor','Received','Verified','Pending Approval','Hold'].includes(o.status)).length;
+}
+
+/* ---- Vendor Entry form: multi-SKU, per-piece additional charges ---- */
+function newVendorEntry(){ vendorEntryForm(); }
+function editPO(id){ vendorEntryForm(omap[id]); }
+function chargeVal(sku,type){const c=(sku&&sku.charges||[]).find(c=>c.type===type);return c?c.perPiece:'';}
+function skuCardHTML(i,sku){
+  sku=sku||{sku:'',productName:'',qty:'',rate:'',packaging:0,sellingPrice:'',charges:[]};
+  return `<div class="sku-card">
+    <div class="sk-head"><b>SKU ${i+1}</b><button class="sk-remove" data-remove title="Remove SKU"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button></div>
+    <div class="sk-grid">
+      <div class="field"><label>SKU Code</label><input class="sk-sku" value="${sku.sku||''}" placeholder="WC-XXXX"/></div>
+      <div class="field col-2"><label>Product Name <span class="req">*</span></label><input class="sk-prod" value="${sku.productName||''}" placeholder="e.g. Royal Scroll Wedding Card"/></div>
+      <div class="field"><label>Quantity <span class="req">*</span></label><input type="number" class="sk-qty" value="${sku.qty??''}" min="1"/></div>
+      <div class="field"><label>Rate / Unit <span class="req">*</span></label><div class="prefix-wrap"><span class="cur">₹</span><input type="number" class="sk-rate" value="${sku.rate??''}" step="0.01"/></div></div>
+      <div class="field"><label>Selling / Unit <span class="req">*</span></label><div class="prefix-wrap"><span class="cur">₹</span><input type="number" class="sk-sell" value="${sku.sellingPrice??''}" step="0.01"/></div></div>
+      <div class="field"><label>Packaging (flat)</label><div class="prefix-wrap"><span class="cur">₹</span><input type="number" class="sk-pack" value="${sku.packaging||0}"/></div></div>
+    </div>
+    <div class="pp-title">Additional charges <span class="hint">cost per piece · multiplied by quantity</span></div>
+    <div class="pp-grid">${CHARGE_TYPES.map(t=>`<div class="pp-item"><label>${t}</label><div class="pp-in"><span class="cur">₹</span><input type="number" class="pp-input" data-charge="${t}" value="${chargeVal(sku,t)}" step="0.01" placeholder="0"/><span class="pp-tot" data-pptot>= ₹0</span></div></div>`).join('')}</div>
+    <div class="sk-line"><span>Base <b data-l-base>₹0</b></span><span>Charges <b data-l-chg>₹0</b></span><span>Packaging <b data-l-pack>₹0</b></span><span>Line landing <b data-l-land>₹0</b></span><span>Line selling <b data-l-sell>₹0</b></span><span>Margin <b data-l-gm>0%</b></span></div>
+  </div>`;
+}
+function vendorEntryForm(existing){
+  const n=el('div');
+  const initSkus=(existing&&existing.skus&&existing.skus.length)?existing.skus:[null];
+  const dISO=d=>d?new Date(d).toISOString().slice(0,10):today.toISOString().slice(0,10);
+  n.innerHTML=`
+    <div class="m-head"><div><h3>${existing?'Edit Vendor Entry':'Add Vendor Entry'}</h3><p>Add one or more SKUs. Totals recalculate instantly.</p></div>
+      <button class="x-btn" data-close><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="m-body">
+      <div style="display:grid;grid-template-columns:1fr 260px;gap:22px;align-items:start">
+        <div>
+          <div class="form-grid">
+            <div class="form-section-title">Order</div>
+            <div class="field"><label>Vendor <span class="req">*</span></label><select id="f_vendor">${vendors.map(v=>`<option value="${v.id}" ${existing&&existing.vendorId===v.id?'selected':''}>${v.name}</option>`).join('')}</select></div>
+            <div class="field"><label>Customer Order No <span class="req">*</span></label><input id="f_co" value="${existing?existing.coId:'ORD-'+pad(5200+orders.length,4)}" placeholder="ORD-0000"/><span class="err">Required</span></div>
+            <div class="field"><label>Order Number <span class="req">*</span></label><input id="f_po" value="${existing?existing.id:'PO-2026-'+pad(1000+orders.length,4)}" placeholder="PO-2026-0000"/><span class="err">Required</span></div>
+            <div class="field"><label>Ordered Date</label><input type="date" id="f_ord" value="${dISO(existing&&existing.ordered)}"/></div>
+            <div class="field"><label>Received Date</label><input type="date" id="f_recv" value="${dISO(existing&&existing.receivedDate)}"/></div>
+            <div class="field"><label>GST %</label><select id="f_gst">${[5,12,18,28].map(g=>`<option ${(existing?existing.gstPct:18)===g?'selected':''}>${g}</option>`).join('')}</select></div>
+          </div>
+
+          <div class="sku-head-row"><div class="form-section-title" style="border:none;padding:0;margin:0">SKUs / Line Items</div><button class="btn sm" id="addSku" type="button"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Add SKU</button></div>
+          <div id="skuList">${initSkus.map((s,i)=>skuCardHTML(i,s)).join('')}</div>
+
+          <div class="form-grid" style="margin-top:6px">
+            <div class="form-section-title">Invoice, Delivery & Audit</div>
+            <div class="field"><label>Invoice Number</label><input id="f_inv" value="${existing&&existing.invoiceNo?existing.invoiceNo:''}" placeholder="INV/…"/></div>
+            <div class="field"><label>Created By</label><input value="Rahul Admin" readonly/></div>
+            <div class="field"><label>Verified By</label><input value="—" readonly/></div>
+            <div class="field col-3"><label>Remarks</label><textarea id="f_rem" placeholder="General notes for this entry…">${existing?(existing.remarks||''):''}</textarea></div>
+            <div class="field col-3"><label>Delivery Note <span class="hint">shortages, damage or delays</span></label><textarea id="f_delnote" placeholder="Flag any issue with this delivery — e.g. short by 12 pieces, one carton damaged…">${existing?(existing.deliveryNote||''):''}</textarea></div>
+          </div>
+        </div>
+
+        <div class="calc-summary card" style="padding:16px">
+          <h3 style="font-size:13px;margin-bottom:8px">Live Cost Summary</h3>
+          <div class="row"><span class="k">SKUs</span><span class="v" id="s_skus">0</span></div>
+          <div class="row"><span class="k">Total Qty</span><span class="v" id="s_qty">0</span></div>
+          <div class="row"><span class="k">Base</span><span class="v" id="s_total">₹0</span></div>
+          <div class="row"><span class="k">Packaging</span><span class="v" id="s_pack">₹0</span></div>
+          <div class="row"><span class="k">Additional charges</span><span class="v" id="s_addl">₹0</span></div>
+          <div class="row"><span class="k">Gross</span><span class="v" id="s_gross">₹0</span></div>
+          <div class="row"><span class="k">GST</span><span class="v" id="s_gst">₹0</span></div>
+          <div class="row total"><span class="k">Landing Cost</span><span class="v" id="s_landing">₹0</span></div>
+          <div class="margin-badge"><div class="m-val" id="s_margin">0.0%</div><div class="m-lbl">Gross Margin</div></div>
+          <div class="row" style="margin-top:10px"><span class="k">Gross Profit</span><span class="v" id="s_gp">₹0</span></div>
+          <div class="row"><span class="k">Landing / unit</span><span class="v" id="s_lpu">₹0</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="m-foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="saveEntry">${existing?'Save Changes':'Create Entry'}</button></div>`;
+  const m=openModal(n,'lg');
+
+  function readSkus(){
+    return $$('.sku-card',m).map(card=>({
+      sku:$('.sk-sku',card).value.trim(),
+      productName:$('.sk-prod',card).value.trim(),
+      qty:+$('.sk-qty',card).value||0,
+      rate:+$('.sk-rate',card).value||0,
+      sellingPrice:+$('.sk-sell',card).value||0,
+      packaging:+$('.sk-pack',card).value||0,
+      charges:$$('.pp-input',card).map(inp=>({type:inp.dataset.charge,perPiece:+inp.value||0})).filter(c=>c.perPiece>0),
+      _card:card
+    }));
+  }
+  function renumber(){$$('.sku-card',m).forEach((c,i)=>{$('.sk-head b',c).textContent='SKU '+(i+1);});}
+  function recalc(){
+    const skus=readSkus();
+    skus.forEach(s=>{
+      const cl=computeSku(s);const card=s._card;
+      $('[data-l-base]',card).textContent=INR(cl.base);
+      $('[data-l-chg]',card).textContent=INR(cl.chargeSum);
+      $('[data-l-pack]',card).textContent=INR(cl.packaging);
+      $('[data-l-land]',card).textContent=INR(cl.lineGross);
+      $('[data-l-sell]',card).textContent=INR(cl.sell);
+      $('[data-l-gm]',card).textContent=PCT(cl.lineGm);
+      $$('.pp-input',card).forEach(inp=>{const pp=+inp.value||0;$('[data-pptot]',inp.closest('.pp-in')).textContent='= '+INR(round2(pp*s.qty));});
+    });
+    const gstPct=+$('#f_gst',m).value||0;
+    const c=computeEntry({skus:skus.map(({_card,...s})=>s),gstPct});
+    $('#s_skus',m).textContent=skus.length;
+    $('#s_qty',m).textContent=c.qty;
+    $('#s_total',m).textContent=INR(c.total);
+    $('#s_pack',m).textContent=INR(c.packaging);
+    $('#s_addl',m).textContent=INR(round2(c.chargeSum));
+    $('#s_gross',m).textContent=INR(c.gross);
+    $('#s_gst',m).textContent=INR(c.gstAmt);
+    $('#s_landing',m).textContent=INR(c.landing);
+    $('#s_gp',m).textContent=INR2(c.gp);
+    $('#s_lpu',m).textContent=INR2(c.landingPerUnit);
+    $('#s_margin',m).textContent=PCT(c.gm);
+  }
+
+  m.addEventListener('input',recalc);
+  m.addEventListener('click',e=>{
+    const rm=e.target.closest('[data-remove]');
+    if(rm){const cards=$$('.sku-card',m);if(cards.length<=1){toast('At least one SKU','An entry needs at least one SKU line');return;}rm.closest('.sku-card').remove();renumber();recalc();}
+  });
+  $('#addSku',m).onclick=()=>{
+    const idx=$$('.sku-card',m).length;
+    const wrap=el('div');wrap.innerHTML=skuCardHTML(idx,null);
+    $('#skuList',m).appendChild(wrap.firstElementChild);
+    recalc();
+  };
+  recalc();
+
+  $('#saveEntry',m).onclick=()=>{
+    let ok=true;
+    const mark=(inp,bad)=>{const f=inp&&inp.closest('.field');if(f)f.classList.toggle('invalid',bad);if(bad)ok=false;};
+    const orderNo=$('#f_po',m).value.trim();
+    const coNo=$('#f_co',m).value.trim();
+    mark($('#f_co',m),!coNo);mark($('#f_po',m),!orderNo);
+    const skus=readSkus();
+    skus.forEach(s=>{
+      mark($('.sk-prod',s._card),!s.productName);
+      mark($('.sk-qty',s._card),!(s.qty>0));
+      mark($('.sk-rate',s._card),!(s.rate>0));
+      mark($('.sk-sell',s._card),!(s.sellingPrice>0));
+    });
+    if(!ok){toast('Check the form','Fill required fields marked with *');return;}
+    const gstPct=+$('#f_gst',m).value||0;
+    const cleanSkus=skus.map(({_card,...s})=>({...s,sku:s.sku||'WC-'+rint(1,99)}));
+    const c=computeEntry({skus:cleanSkus,gstPct});
+    const common={coId:coNo,vendorId:$('#f_vendor',m).value,skus:cleanSkus,gstPct,...c,
+      sku:cleanSkus[0].sku,productName:cleanSkus[0].productName,
+      invoiceNo:$('#f_inv',m).value||null,remarks:$('#f_rem',m).value,deliveryNote:$('#f_delnote',m).value,modifiedDate:today};
+    if(existing){
+      const oldId=existing.id;
+      Object.assign(existing,common,{id:orderNo});
+      if(orderNo!==oldId){delete omap[oldId];omap[orderNo]=existing;}
+      recomputeVendor(existing.vendorId);
+      closeModal();toast('Entry updated',orderNo+' recalculated');go(currentPage);
+    }else{
+      const rec={id:orderNo,...common,
+        ordered:new Date($('#f_ord',m).value),expDelivery:new Date($('#f_ord',m).value),
+        receivedDate:new Date($('#f_recv',m).value),status:'Received',
+        adminApproval:'—',paymentStatus:'Unpaid',invoiceNo:common.invoiceNo||'INV/'+rint(1000,9999),
+        invoiceDate:new Date($('#f_recv',m).value),dueDate:null,createdBy:'Rahul Admin',approver:'Rahul Admin',
+        approvalDate:null,createdDate:today,locked:false,comments:[],notes:''};
+      orders.unshift(rec);omap[rec.id]=rec;recomputeVendor(rec.vendorId);
+      closeModal();toast('Entry created',rec.id+' added to vendor entries');go(currentPage);
+    }
+  };
+}
+
+/* ---- simple create modals ---- */
+function createVendor(){
+  const n=el('div');
+  n.innerHTML=`<div class="m-head"><div><h3>Create Vendor</h3><p>Add a new card supplier to the master.</p></div><button class="x-btn" data-close><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+  <div class="m-body"><div class="form-grid" style="grid-template-columns:repeat(2,1fr)">
+    <div class="field col-2"><label>Vendor Name <span class="req">*</span></label><input placeholder="Business name"/></div>
+    <div class="field"><label>GST Number</label><input placeholder="22AAAAA0000A1Z5"/></div>
+    <div class="field"><label>PAN</label><input placeholder="AAAAA0000A"/></div>
+    <div class="field"><label>Contact Person</label><input/></div>
+    <div class="field"><label>Phone</label><input placeholder="+91 …"/></div>
+    <div class="field"><label>Email</label><input type="email"/></div>
+    <div class="field"><label>Payment Terms</label><select>${PAYMENT_TERMS.map(t=>`<option>${t}</option>`).join('')}</select></div>
+    <div class="field col-2"><label>Address</label><textarea></textarea></div>
+  </div></div>
+  <div class="m-foot"><button class="btn" data-close>Cancel</button><button class="btn primary" onclick="closeModal();toast('Vendor created','New vendor added to master')">Create Vendor</button></div>`;
+  openModal(n);
+}
+
+/* ============================================================= *
+ * 7. ROUTER + BOOT                                             *
+ * ============================================================= */
+const NAV=[
+  {id:'dashboard',label:'Dashboard',icon:'<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>'},
+  {id:'entries',label:'Vendor Entries',icon:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',badge:()=>orders.filter(o=>o.status==='Received').length},
+  {id:'approval',label:'Payment Approval',icon:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',badge:()=>orders.filter(o=>['Pending Approval','Verified','Hold'].includes(o.status)).length},
+  {id:'vendors',label:'Vendors',icon:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/>'},
+  {id:'reports',label:'Reports',icon:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'},
+  {id:'analytics',label:'Analytics',icon:'<path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/>'},
+  {id:'settings',label:'Settings',icon:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>'}
+];
+let currentPage='dashboard';
+function buildNav(){
+  const nav=$('#nav');nav.innerHTML='';
+  nav.appendChild(el('div','group-label','Operations'));
+  NAV.forEach((item,i)=>{
+    if(item.id==='reports')nav.appendChild(el('div','group-label','Insights'));
+    const a=el('a',item.id===currentPage?'active':'');
+    const badge=item.badge?item.badge():0;
+    a.innerHTML=`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">${item.icon}</svg><span>${item.label}</span>${badge?`<span class="badge">${badge}</span>`:''}`;
+    a.onclick=()=>go(item.id);
+    nav.appendChild(a);
+  });
+}
+function go(id){
+  currentPage=id;
+  const item=NAV.find(n=>n.id===id)||NAV[0];
+  $('#crumbs').innerHTML=`King of Cards<span class="sep">/</span><b>${item.label}</b>`;
+  const view=$('#view');view.innerHTML='';view.appendChild(pages[id]());
+  view.scrollTo?.(0,0);window.scrollTo(0,0);
+  buildNav();
+  if(window.innerWidth<=960)$('#sidebar').classList.remove('open');
+}
+window.go=go;window.newVendorEntry=newVendorEntry;window.createVendor=createVendor;
+window.editPO=editPO;window.viewPO=viewPO;window.closeModal=closeModal;window.toast=toast;
+
+// header wiring
+function boot(){
+  buildNav();go('dashboard');
+  $('#topDate').textContent=today.toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+  $('#menuToggle').onclick=()=>$('#sidebar').classList.toggle('open');
+  $('#refreshBtn').onclick=()=>{const b=$('#refreshBtn');b.style.transition='transform .5s';b.querySelector('svg').style.transform='rotate(360deg)';setTimeout(()=>b.querySelector('svg').style.transform='',500);toast('Refreshed','Data synced just now');};
+  $('#exportTop').onclick=()=>exportCSV('procurement_export.csv',orders,[
+    {label:'PO',val:o=>o.id},{label:'Vendor',val:o=>vmap[o.vendorId].name},{label:'Product',val:o=>o.productName},
+    {label:'Qty',val:o=>o.qty},{label:'Landing',val:o=>o.landing},{label:'Selling',val:o=>o.sellingPrice},
+    {label:'Margin%',val:o=>o.gm},{label:'Status',val:o=>o.status}]);
+  $('#notifBtn').onclick=()=>toast('Notifications',orders.filter(o=>o.status==='Pending Approval').length+' approvals awaiting review');
+  // global search
+  const gs=$('#globalSearch');
+  document.addEventListener('keydown',e=>{if(e.key==='/'&&document.activeElement!==gs&&!/input|textarea|select/i.test(document.activeElement.tagName)){e.preventDefault();gs.focus();}});
+  gs.addEventListener('keydown',e=>{
+    if(e.key==='Enter'){
+      const q=gs.value.trim().toLowerCase();if(!q)return;
+      const hit=orders.find(o=>[o.id,o.coId,o.sku,o.productName,o.invoiceNo,vmap[o.vendorId].name].some(x=>String(x).toLowerCase().includes(q)));
+      const vhit=vendors.find(v=>v.name.toLowerCase().includes(q));
+      if(hit)viewPO(hit.id);else if(vhit)viewVendor(vhit.id);else toast('No results','Nothing matched “'+gs.value+'”');
+    }
+    if(e.key==='Escape')gs.blur();
+  });
+}
+boot();
+</script>
+</body>
+</html>
