@@ -11,7 +11,6 @@ import (
 	"github.com/king-of-cards/finance-project/internal/db"
 )
 
-
 func RequireAuth(pool *pgxpool.Pool, jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
@@ -42,6 +41,4 @@ func RequireAuth(pool *pgxpool.Pool, jwtSecret string) gin.HandlerFunc {
 		c.Next()
 	}
 
-
-	
 }

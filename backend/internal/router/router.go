@@ -13,6 +13,7 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 
 	userHandler := handlers.NewUserHandler(pool)
 	authHandler := handlers.NewAuthHandler(pool, jwtSecret, jwtExpiryHr)
+	vendorHandler := handlers.NewVendorHandler(pool)
 
 	api := r.Group("/api")
 	{
@@ -23,6 +24,10 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 		{
 			protected.GET("/users", userHandler.GetAllUsers)
 			protected.POST("/logout", authHandler.Logout)
+			protected.GET("/auth/me", authHandler.Me)
+			protected.GET("/finance-users", userHandler.GetFinanceUsers)
+			protected.GET("/vendors", vendorHandler.GetVendors)
+
 		}
 	}
 

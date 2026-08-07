@@ -85,5 +85,26 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
+
+}
+
+func (h *AuthHandler) Me(c *gin.Context) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return 
+	}
+	userID := userIDVal.(string)
+	user, err := db.GetUserByID(c.Request.Context(), h.Pool, userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound,gin.H{"error": "user not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_id": user.UserID,
+		"name":    user.Name,
+		"role":    user.Role,
+	})
 	
 }
