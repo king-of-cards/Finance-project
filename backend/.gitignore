@@ -1,0 +1,19 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+seed
+server
+
+# Env files
+.env
+
+# Go build/test artifacts
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
