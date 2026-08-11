@@ -27,6 +27,10 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 			protected.GET("/auth/me", authHandler.Me)
 			protected.GET("/finance-users", userHandler.GetFinanceUsers)
 			protected.GET("/vendors", vendorHandler.GetVendors)
+			protected.GET("/vendors/:id", vendorHandler.GetVendorDetail)
+			protected.GET("/vendors/:id/orders", vendorHandler.GetVendorOrders)
+			protected.POST("/vendors", vendorHandler.CreateVendor)
+			protected.PATCH("/vendors/:id", vendorHandler.UpdateVendor)
 
 		}
 	}
