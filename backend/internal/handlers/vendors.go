@@ -207,3 +207,20 @@ func (h *VendorHandler) UpdateVendor(c *gin.Context) {
 	c.JSON(http.StatusOK, vendor)
 
 }
+
+func (h *VendorHandler) DeactivateVendor(c *gin.Context) {
+	vendorID := c.Param("id")
+
+	vendor, err := db.DeactivateVendor(c.Request.Context(), h.Pool, vendorID)
+	if err != nil {
+		if err == db.ErrVendorNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "vendor not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to deactivate vendor"})
+		return
+	}
+
+	c.JSON(http.StatusOK, vendor)
+
+}

@@ -373,3 +373,10 @@ func UpdateVendor(ctx context.Context, pool *pgxpool.Pool, vendorID string, inpu
 
 	return &v, nil
 }
+
+func DeactivateVendor(ctx context.Context, pool *pgxpool.Pool, vendorID string) (*Vendor, error) {
+	inactive := "Inactive"
+	return UpdateVendor(ctx, pool, vendorID, UpdateVendorInput{
+		Status: &inactive,
+	})
+}

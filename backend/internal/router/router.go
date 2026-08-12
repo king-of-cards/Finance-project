@@ -31,6 +31,7 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 			protected.GET("/vendors/:id/orders", vendorHandler.GetVendorOrders)
 			protected.POST("/vendors", vendorHandler.CreateVendor)
 			protected.PATCH("/vendors/:id", vendorHandler.UpdateVendor)
+			protected.DELETE("/vendors/:id", vendorHandler.DeactivateVendor)
 
 		}
 	}
