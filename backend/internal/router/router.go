@@ -14,6 +14,7 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 	userHandler := handlers.NewUserHandler(pool)
 	authHandler := handlers.NewAuthHandler(pool, jwtSecret, jwtExpiryHr)
 	vendorHandler := handlers.NewVendorHandler(pool)
+	poHandler := handlers.NewPurchaseOrderHandler(pool)
 
 	api := r.Group("/api")
 	{
@@ -32,6 +33,10 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 			protected.POST("/vendors", vendorHandler.CreateVendor)
 			protected.PATCH("/vendors/:id", vendorHandler.UpdateVendor)
 			protected.DELETE("/vendors/:id", vendorHandler.DeactivateVendor)
+			protected.GET("/purchase-orders", poHandler.GetPurchaseOrders)
+			protected.GET("/purchase-orders/:id", poHandler.GetPurchaseOrderDetail)
+			protected.POST("/purchase-orders", poHandler.CreatePurchaseOrder)
+			protected.GET("/purchase-orders/export", poHandler.ExportPurchaseOrders)
 
 		}
 	}
