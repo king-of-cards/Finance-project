@@ -1,5 +1,10 @@
 $ErrorActionPreference = "Stop"
 
+$env:GOTMPDIR = "$PSScriptRoot\gotmp"
+if (-not (Test-Path "$PSScriptRoot\gotmp")) {
+    New-Item -ItemType Directory -Path "$PSScriptRoot\gotmp" | Out-Null
+}
+
 function Step($name, $scriptBlock) {
     Write-Host ""
     Write-Host "==> $name" -ForegroundColor Cyan

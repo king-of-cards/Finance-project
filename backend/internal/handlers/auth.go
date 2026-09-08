@@ -1,4 +1,4 @@
-package handlers 
+package handlers
 
 import (
 	"net/http"
@@ -9,7 +9,6 @@ import (
 
 	"github.com/king-of-cards/finance-project/internal/auth"
 	"github.com/king-of-cards/finance-project/internal/db"
-
 )
 
 type AuthHandler struct {
@@ -34,11 +33,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	user, err := db.GetUserByID(c.Request.Context(), h.Pool, req.UserID)
-
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		return
 	}
-
 	if !auth.CheckPassword(req.Password, user.PasswordHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
@@ -59,17 +57,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		},
 	})
 
-
 }
-
 
 func (h *AuthHandler) Logout(c *gin.Context) {
 	header := c.GetHeader("Authorization")
 	if header == "" || !strings.HasPrefix(header, "Bearer ") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing authorization header"})
-		return 
+		return
 	}
-	tokenStr := strings.TrimPrefix(header,"Bearer ")
+	tokenStr := strings.TrimPrefix(header, "Bearer ")
 
 	claims, err := auth.ValidateToken(tokenStr, h.JWTSecret)
 	if err != nil {
@@ -77,7 +73,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	err = db.RevokeToken(c.Request.Context(),h.Pool, claims.ID, claims.ExpiresAt.Time )
+	err = db.RevokeToken(c.Request.Context(), h.Pool, claims.ID, claims.ExpiresAt.Time)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not log out"})
@@ -92,12 +88,12 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
-		return 
+		return
 	}
 	userID := userIDVal.(string)
 	user, err := db.GetUserByID(c.Request.Context(), h.Pool, userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound,gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 
@@ -106,5 +102,5 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		"name":    user.Name,
 		"role":    user.Role,
 	})
-	
+
 }

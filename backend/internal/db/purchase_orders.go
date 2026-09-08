@@ -2,12 +2,13 @@ package db
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
-	"encoding/csv"
-	"io"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -455,7 +456,6 @@ func CreatePurchaseOrder(ctx context.Context, pool *pgxpool.Pool, input CreatePu
 	return GetPurchaseOrderDetail(ctx, pool, poNumber)
 }
 
-
 type UpdateChargeInput struct {
 	ChargeID     *int64
 	ChargeTypeID *string
@@ -748,14 +748,11 @@ func recomputePOTotals(ctx context.Context, tx pgx.Tx, poNumber string) error {
 	}
 
 	return nil
-}  
-
-
-
+}
 
 var ErrPurchaseOrderLocked = errors.New("purchase order is locked and cannot be deleted")
 
-func CancelPurchaseOrder(ctx context.Context,pool *pgxpool.Pool ,  poNumber string)  (*PurchaseOrderDetail, error)  {
+func CancelPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poNumber string) (*PurchaseOrderDetail, error) {
 	var locked bool
 	err := pool.QueryRow(ctx, `
 		SELECT locked FROM finance_purchase_orders WHERE po_number = $1
@@ -779,10 +776,7 @@ func CancelPurchaseOrder(ctx context.Context,pool *pgxpool.Pool ,  poNumber stri
 
 	return GetPurchaseOrderDetail(ctx, pool, poNumber)
 
-	
 }
-
-
 
 func ExportPurchaseOrders(ctx context.Context, pool *pgxpool.Pool, filters PurchaseOrderFilters, w io.Writer) error {
 	selectClause := `SELECT po.po_number, po.customer_order_no, po.vendor_id, v.name,
@@ -848,10 +842,7 @@ func ExportPurchaseOrders(ctx context.Context, pool *pgxpool.Pool, filters Purch
 
 	return nil
 
-	
 }
-
-
 
 func formatDatePtr(t *time.Time) string {
 	if t == nil {
@@ -866,4 +857,522 @@ func stringPtrOrEmpty(s *string) string {
 	}
 	return *s
 
+}
+
+type StatusHistoryEntry struct {
+	HistoryID     int64     `json:"history_id"`
+	FromStatus    *string   `json:"from_status"`
+	ToStatus      string    `json:"to_status"`
+	ChangedBy     string    `json:"changed_by"`
+	ChangedByName string    `json:"changed_by_name"`
+	Note          *string   `json:"note"`
+	ChangedAt     time.Time `json:"changed_at"`
+}
+
+func GetPurchaseOrderStatusHistory(ctx context.Context, pool *pgxpool.Pool, poNumber string) ([]StatusHistoryEntry, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM finance_purchase_orders WHERE po_number = $1)`, poNumber).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("checking purchase order existence: %w", err)
+	}
+	if !exists {
+		return nil, ErrPurchaseOrderNotFound
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT h.history_id, h.from_status, h.to_status, h.changed_by, u.name, h.note, h.changed_at
+		FROM finance_order_status_history h
+		JOIN finance_users u ON u.user_id = h.changed_by
+		WHERE h.po_number = $1
+		ORDER BY h.changed_at ASC
+	`, poNumber)
+	if err != nil {
+		return nil, fmt.Errorf("querying status history: %w", err)
+	}
+	defer rows.Close()
+
+	var history []StatusHistoryEntry
+	for rows.Next() {
+		var e StatusHistoryEntry
+		if err := rows.Scan(&e.HistoryID, &e.FromStatus, &e.ToStatus, &e.ChangedBy, &e.ChangedByName, &e.Note, &e.ChangedAt); err != nil {
+			return nil, fmt.Errorf("scanning status history row: %w", err)
+		}
+		history = append(history, e)
+
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating status history rows: %w", err)
+	}
+
+	return history, nil
+
+}
+
+func getCurrentPOStatus(ctx context.Context, tx pgx.Tx, poNumber string) (string, error) {
+	var status string
+	err := tx.QueryRow(ctx, `SELECT status FROM finance_purchase_orders WHERE po_number = $1`, poNumber).Scan(&status)
+
+	if err != nil {
+		return "", fmt.Errorf("reading current status :%w", err)
+	}
+	return status, nil
+
+}
+
+func insertStatusHistory(ctx context.Context, tx pgx.Tx, poNumber, fromStatus, toStatus, changedBy string, note *string) error {
+	_, err := tx.Exec(ctx, `INSERT INTO finance_order_status_history (po_number, from_status, to_status, changed_by, note)
+		VALUES ($1, $2, $3, $4, $5)`, poNumber, fromStatus, toStatus, changedBy, note)
+
+	if err != nil {
+		return fmt.Errorf("inserting status history: %w", err)
+	}
+	return nil
+}
+
+var ErrLineItemsNotFullyVerified = errors.New("all line items must be verified before approval")
+
+func ApprovePurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poNumber string, verifiedLineItemIDs []int64, comment *string, approverID string) (*PurchaseOrderDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	currentStatus, err := getCurrentPOStatus(ctx, tx, poNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.Query(ctx, `SELECT line_item_id FROM finance_order_line_items WHERE po_number = $1`, poNumber)
+	if err != nil {
+		return nil, fmt.Errorf("fetching line items for verification: %w", err)
+	}
+	var allLineItemIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scanning line item id: %w", err)
+		}
+		allLineItemIDs = append(allLineItemIDs, id)
+	}
+	rows.Close()
+
+	verifiedSet := make(map[int64]bool)
+	for _, id := range verifiedLineItemIDs {
+		verifiedSet[id] = true
+	}
+	for _, id := range allLineItemIDs {
+		if !verifiedSet[id] {
+			return nil, ErrLineItemsNotFullyVerified
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE finance_purchase_orders
+		SET status = 'Approved', payment_status = 'Payment Ready', locked = true,
+		    approver_id = $1, approval_date = CURRENT_DATE
+		WHERE po_number = $2
+	`, approverID, poNumber)
+	if err != nil {
+		return nil, fmt.Errorf("approving purchase order: %w", err)
+	}
+
+	if err := insertStatusHistory(ctx, tx, poNumber, currentStatus, "Approved", approverID, comment); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return GetPurchaseOrderDetail(ctx, pool, poNumber)
+}
+
+func RejectPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poNumber, reason, changedBy string) (*PurchaseOrderDetail, error) {
+	return simpleStatusTransition(ctx, pool, poNumber, "Rejected", changedBy, &reason, nil)
+}
+
+func HoldPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poNumber, changedBy string, comment *string) (*PurchaseOrderDetail, error) {
+	return simpleStatusTransition(ctx, pool, poNumber, "Hold", changedBy, comment, nil)
+}
+
+func RequestChangesPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poNumber, changedBy string, comment *string) (*PurchaseOrderDetail, error) {
+	return simpleStatusTransition(ctx, pool, poNumber, "Received", changedBy, comment, nil)
+}
+
+func MarkPaidPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poNumber, changedBy string, comment *string) (*PurchaseOrderDetail, error) {
+	extra := "UPDATE finance_purchase_orders SET payment_status = 'Paid' WHERE po_number = $1"
+	return simpleStatusTransition(ctx, pool, poNumber, "Paid", changedBy, comment, &extra)
+}
+
+func simpleStatusTransition(ctx context.Context, pool *pgxpool.Pool, poNumber, newStatus, changedBy string, note *string, extraSQL *string) (*PurchaseOrderDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	currentStatus, err := getCurrentPOStatus(ctx, tx, poNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE finance_purchase_orders SET status = $1 WHERE po_number = $2`, newStatus, poNumber)
+	if err != nil {
+		return nil, fmt.Errorf("updating status to %s: %w", newStatus, err)
+	}
+
+	if extraSQL != nil {
+		if _, err := tx.Exec(ctx, *extraSQL, poNumber); err != nil {
+			return nil, fmt.Errorf("applying extra update for %s: %w", newStatus, err)
+		}
+	}
+
+	if err := insertStatusHistory(ctx, tx, poNumber, currentStatus, newStatus, changedBy, note); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return GetPurchaseOrderDetail(ctx, pool, poNumber)
+}
+
+func getPONumberForLineItem(ctx context.Context, tx pgx.Tx, lineItemID int64) (string, error) {
+	var poNumber string
+	err := tx.QueryRow(ctx, `SELECT po_number FROM finance_order_line_items WHERE line_item_id = $1`, lineItemID).Scan(&poNumber)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrLineItemNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("looking up po_number for line item: %w", err)
+	}
+	return poNumber, nil
+}
+
+var ErrLineItemNotFound = errors.New("line item not found")
+var ErrCannotDeleteLastLineItem = errors.New("cannot delete the last remaining line item on a purchase order")
+
+func GetLineItems(ctx context.Context, pool *pgxpool.Pool, poNumber string) ([]LineItemDetail, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM finance_purchase_orders WHERE po_number = $1)`, poNumber).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("checking purchase order existence: %w", err)
+	}
+	if !exists {
+		return nil, ErrPurchaseOrderNotFound
+	}
+
+	detail, err := GetPurchaseOrderDetail(ctx, pool, poNumber)
+	if err != nil {
+		return nil, err
+	}
+	return detail.LineItems, nil
+}
+
+func AddLineItem(ctx context.Context, pool *pgxpool.Pool, poNumber string, sku CreateSKUInput) (*LineItemDetail, error) {
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM finance_purchase_orders WHERE po_number = $1)`, poNumber).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("checking purchase order existence: %w", err)
+	}
+	if !exists {
+		return nil, ErrPurchaseOrderNotFound
+	}
+
+	var lineItemID int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO finance_order_line_items (po_number, sku_code, product_name, quantity, rate_per_unit, packaging_flat, selling_price_per_unit)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING line_item_id
+	`, poNumber, sku.SKUCode, sku.ProductName, sku.Quantity, sku.RatePerUnit, sku.PackagingFlat, sku.SellingPricePerUnit).Scan(&lineItemID)
+	if err != nil {
+		return nil, fmt.Errorf("inserting line item: %w", err)
+	}
+
+	for _, ch := range sku.Charges {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO finance_line_item_charges (line_item_id, charge_type_id, rate_per_piece)
+			VALUES ($1, $2, $3)
+		`, lineItemID, ch.ChargeTypeID, ch.RatePerPiece)
+		if err != nil {
+			return nil, fmt.Errorf("inserting charge: %w", err)
+		}
+	}
+
+	if err := recomputePOTotals(ctx, tx, poNumber); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return getLineItemDetail(ctx, pool, lineItemID)
+
+}
+
+type UpdateLineItemInput struct {
+	SKUCode             *string
+	ProductName         *string
+	Quantity            *int
+	RatePerUnit         *float64
+	PackagingFlat       *float64
+	SellingPricePerUnit *float64
+}
+
+func UpdateLineItem(ctx context.Context, pool *pgxpool.Pool, lineItemID int64, input UpdateLineItemInput) (*LineItemDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	poNumber, err := getPONumberForLineItem(ctx, tx, lineItemID)
+	if err != nil {
+		return nil, err
+	}
+
+	var setClauses []string
+	var args []interface{}
+	argPos := 1
+	addField := func(column string, value interface{}) {
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", column, argPos))
+		args = append(args, value)
+		argPos++
+	}
+
+	if input.SKUCode != nil {
+		addField("sku_code", *input.SKUCode)
+	}
+	if input.ProductName != nil {
+		addField("product_name", *input.ProductName)
+	}
+	if input.Quantity != nil {
+		addField("quantity", *input.Quantity)
+	}
+	if input.RatePerUnit != nil {
+		addField("rate_per_unit", *input.RatePerUnit)
+	}
+	if input.PackagingFlat != nil {
+		addField("packaging_flat", *input.PackagingFlat)
+	}
+	if input.SellingPricePerUnit != nil {
+		addField("selling_price_per_unit", *input.SellingPricePerUnit)
+	}
+
+	if len(setClauses) > 0 {
+		query := fmt.Sprintf(`UPDATE finance_order_line_items SET %s WHERE line_item_id = $%d`,
+			strings.Join(setClauses, ", "), argPos)
+		args = append(args, lineItemID)
+		if _, err := tx.Exec(ctx, query, args...); err != nil {
+			return nil, fmt.Errorf("updating line item: %w", err)
+		}
+	}
+
+	if err := recomputePOTotals(ctx, tx, poNumber); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return getLineItemDetail(ctx, pool, lineItemID)
+}
+
+func DeleteLineItem(ctx context.Context, pool *pgxpool.Pool, lineItemID int64) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	poNumber, err := getPONumberForLineItem(ctx, tx, lineItemID)
+	if err != nil {
+		return err
+	}
+
+	var count int
+	err = tx.QueryRow(ctx, `SELECT COUNT(*) FROM finance_order_line_items WHERE po_number = $1`, poNumber).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("counting line items: %w", err)
+	}
+	if count <= 1 {
+		return ErrCannotDeleteLastLineItem
+	}
+
+	_, err = tx.Exec(ctx, `DELETE FROM finance_order_line_items WHERE line_item_id = $1`, lineItemID)
+	if err != nil {
+		return fmt.Errorf("deleting line item: %w", err)
+	}
+
+	if err := recomputePOTotals(ctx, tx, poNumber); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return nil
+}
+
+func getLineItemDetail(ctx context.Context, pool *pgxpool.Pool, lineItemID int64) (*LineItemDetail, error) {
+	var li LineItemDetail
+	err := pool.QueryRow(ctx, `
+		SELECT line_item_id, sku_code, product_name, quantity, rate_per_unit, packaging_flat, selling_price_per_unit
+		FROM finance_order_line_items
+		WHERE line_item_id = $1
+	`, lineItemID).Scan(&li.LineItemID, &li.SKUCode, &li.ProductName, &li.Quantity, &li.RatePerUnit, &li.PackagingFlat, &li.SellingPricePerUnit)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrLineItemNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetching line item: %w", err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT c.charge_id, c.charge_type_id, ct.name, c.rate_per_piece
+		FROM finance_line_item_charges c
+		JOIN finance_charge_types ct ON ct.charge_type_id = c.charge_type_id
+		WHERE c.line_item_id = $1
+	`, lineItemID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching charges: %w", err)
+	}
+	defer rows.Close()
+
+	li.Charges = []ChargeDetail{}
+	for rows.Next() {
+		var ch ChargeDetail
+		if err := rows.Scan(&ch.ChargeID, &ch.ChargeTypeID, &ch.ChargeName, &ch.RatePerPiece); err != nil {
+			return nil, fmt.Errorf("scanning charge: %w", err)
+		}
+		li.Charges = append(li.Charges, ch)
+	}
+
+	qty := float64(li.Quantity)
+	var chargesPerPiece float64
+	for _, ch := range li.Charges {
+		chargesPerPiece += ch.RatePerPiece
+	}
+	li.ComputedLineTotal = qty*li.RatePerUnit + qty*li.PackagingFlat + qty*chargesPerPiece
+
+	return &li, nil
+}
+
+func GetLineItemCharges(ctx context.Context, pool *pgxpool.Pool, lineItemID int64) ([]ChargeDetail, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM finance_order_line_items WHERE line_item_id = $1)`, lineItemID).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("checking line item existence: %w", err)
+	}
+	if !exists {
+		return nil, ErrLineItemNotFound
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT c.charge_id, c.charge_type_id, ct.name, c.rate_per_piece
+		FROM finance_line_item_charges c
+		JOIN finance_charge_types ct ON ct.charge_type_id = c.charge_type_id
+		WHERE c.line_item_id = $1
+	`, lineItemID)
+	if err != nil {
+		return nil, fmt.Errorf("querying charges: %w", err)
+	}
+	defer rows.Close()
+
+	charges := []ChargeDetail{}
+	for rows.Next() {
+		var ch ChargeDetail
+		if err := rows.Scan(&ch.ChargeID, &ch.ChargeTypeID, &ch.ChargeName, &ch.RatePerPiece); err != nil {
+			return nil, fmt.Errorf("scanning charge: %w", err)
+		}
+		charges = append(charges, ch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating charges: %w", err)
+	}
+
+	return charges, nil
+}
+
+func ReplaceLineItemCharges(ctx context.Context, pool *pgxpool.Pool, lineItemID int64, newCharges []CreateChargeInput) ([]ChargeDetail, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	poNumber, err := getPONumberForLineItem(ctx, tx, lineItemID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(ctx, `DELETE FROM finance_line_item_charges WHERE line_item_id = $1`, lineItemID)
+	if err != nil {
+		return nil, fmt.Errorf("clearing existing charges: %w", err)
+	}
+
+	for _, ch := range newCharges {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO finance_line_item_charges (line_item_id, charge_type_id, rate_per_piece)
+			VALUES ($1, $2, $3)
+		`, lineItemID, ch.ChargeTypeID, ch.RatePerPiece)
+		if err != nil {
+			return nil, fmt.Errorf("inserting charge: %w", err)
+		}
+	}
+
+	if err := recomputePOTotals(ctx, tx, poNumber); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return GetLineItemCharges(ctx, pool, lineItemID)
+}
+
+var ErrChargeNotFound = errors.New("charge not found")
+
+func DeleteLineItemCharge(ctx context.Context, pool *pgxpool.Pool, lineItemID, chargeID int64) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	poNumber, err := getPONumberForLineItem(ctx, tx, lineItemID)
+	if err != nil {
+		return err
+	}
+
+	result, err := tx.Exec(ctx, `DELETE FROM finance_line_item_charges WHERE charge_id = $1 AND line_item_id = $2`, chargeID, lineItemID)
+	if err != nil {
+		return fmt.Errorf("deleting charge: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrChargeNotFound
+	}
+
+	if err := recomputePOTotals(ctx, tx, poNumber); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return nil
 }

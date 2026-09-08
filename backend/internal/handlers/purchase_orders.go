@@ -68,7 +68,7 @@ func (h *PurchaseOrderHandler) GetPurchaseOrders(c *gin.Context) {
 
 	result, err := db.GetPurchaseOrders(c.Request.Context(), h.Pool, filters, page, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch purchase orders"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "fail   to fetch purchase orders"})
 		return
 	}
 
@@ -316,6 +316,187 @@ func (h *PurchaseOrderHandler) CancelPurchaseOrder(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to cancel purchase order"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// func (h *PurchaseOrderHandler) getPurchaseOrderStatusHistory(c *gin.Context) {
+// 	poNumber := c.Param("id")
+
+// 	history, err := db.GetPurchaseOrderStatusHistory(c.Request.Context(), h.Pool, poNumber)
+// 	if err != nil {
+// 		if err == db.ErrPurchaseOrderNotFound {
+// 			c.JSON(http.StatusNotFound, gin.H{"error": "failed to fetch status history"})
+// 			return
+// 		}
+// 	}
+// 	c.JSON(http.StatusOK, gin.H{"history": history})
+// }
+
+func (h *PurchaseOrderHandler) GetPurchaseOrderStatusHistory(c *gin.Context) {
+	poNumber := c.Param("id")
+
+	history, err := db.GetPurchaseOrderStatusHistory(c.Request.Context(), h.Pool, poNumber)
+	if err != nil {
+		if err == db.ErrPurchaseOrderNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "purchase order not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch status history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"history": history})
+}
+
+func requireApproverRole(c *gin.Context) (string, bool) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return "", false
+	}
+	roleVal, _ := c.Get("role")
+	role, _ := roleVal.(string)
+	if role != "approver" && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only approvers can perform this action"})
+		return "", false
+	}
+	return userIDVal.(string), true
+}
+
+type approveRequest struct {
+	VerifiedLineItemIds []int64 `json:"verifiedLineItemIds"`
+	Comment             *string `json:"comment"`
+}
+
+func (h *PurchaseOrderHandler) ApprovePurchaseOrder(c *gin.Context) {
+	userID, ok := requireApproverRole(c)
+	if !ok {
+		return
+	}
+	poNumber := c.Param("id")
+
+	var req approveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	result, err := db.ApprovePurchaseOrder(c.Request.Context(), h.Pool, poNumber, req.VerifiedLineItemIds, req.Comment, userID)
+	if err != nil {
+		switch err {
+		case db.ErrPurchaseOrderNotFound:
+			c.JSON(http.StatusNotFound, gin.H{"error": "purchase order not found"})
+		case db.ErrLineItemsNotFullyVerified:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "all line items must be verified before approval"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve purchase order"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+type reasonRequest struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+func (h *PurchaseOrderHandler) RejectPurchaseOrder(c *gin.Context) {
+	userID, ok := requireApproverRole(c)
+	if !ok {
+		return
+	}
+	poNumber := c.Param("id")
+
+	var req reasonRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required"})
+		return
+	}
+
+	result, err := db.RejectPurchaseOrder(c.Request.Context(), h.Pool, poNumber, req.Reason, userID)
+	if err != nil {
+		if err == db.ErrPurchaseOrderNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "purchase order not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject purchase order"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+type commentRequest struct {
+	Comment *string `json:"comment"`
+}
+
+func (h *PurchaseOrderHandler) HoldPurchaseOrder(c *gin.Context) {
+	userID, ok := requireApproverRole(c)
+	if !ok {
+		return
+	}
+	poNumber := c.Param("id")
+
+	var req commentRequest
+	_ = c.ShouldBindJSON(&req) // comment is optional, ignore bind errors on empty body
+
+	result, err := db.HoldPurchaseOrder(c.Request.Context(), h.Pool, poNumber, userID, req.Comment)
+	if err != nil {
+		if err == db.ErrPurchaseOrderNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "purchase order not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hold purchase order"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *PurchaseOrderHandler) RequestChangesPurchaseOrder(c *gin.Context) {
+	userID, ok := requireApproverRole(c)
+	if !ok {
+		return
+	}
+	poNumber := c.Param("id")
+
+	var req commentRequest
+	_ = c.ShouldBindJSON(&req)
+
+	result, err := db.RequestChangesPurchaseOrder(c.Request.Context(), h.Pool, poNumber, userID, req.Comment)
+	if err != nil {
+		if err == db.ErrPurchaseOrderNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "purchase order not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to request changes"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *PurchaseOrderHandler) MarkPaidPurchaseOrder(c *gin.Context) {
+	userID, ok := requireApproverRole(c)
+	if !ok {
+		return
+	}
+	poNumber := c.Param("id")
+
+	var req commentRequest
+	_ = c.ShouldBindJSON(&req)
+
+	result, err := db.MarkPaidPurchaseOrder(c.Request.Context(), h.Pool, poNumber, userID, req.Comment)
+	if err != nil {
+		if err == db.ErrPurchaseOrderNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "purchase order not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark purchase order as paid"})
 		return
 	}
 
