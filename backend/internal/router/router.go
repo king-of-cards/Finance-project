@@ -10,6 +10,7 @@ import (
 
 func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 	r := gin.Default()
+	r.Use(middleware.CORS())
 
 	userHandler := handlers.NewUserHandler(pool)
 	authHandler := handlers.NewAuthHandler(pool, jwtSecret, jwtExpiryHr)
