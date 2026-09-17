@@ -18,8 +18,8 @@ func GenerateToken(userID, role, secret string, expiryHours int) (string, time.T
 	expiresAt := time.Now().Add(time.Duration(expiryHours) * time.Hour)
 	jti := uuid.NewString()
 	claims := Claims{
-		UserID: userID,
-		Role:   role,
+		UserID: userID, 
+		Role:   role, 
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(expiryHours) * time.Hour)),

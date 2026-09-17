@@ -33,7 +33,7 @@ func GetUserByID(ctx context.Context, pool *pgxpool.Pool, userID string) (*UserC
 		return nil, fmt.Errorf("querying user: %w", err)
 	}
 
-	return &u, nil
+	return &u, nil 
 
 
 

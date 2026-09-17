@@ -18,6 +18,10 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 	poHandler := handlers.NewPurchaseOrderHandler(pool)
 	lineItemHandler := handlers.NewLineItemHandler(pool)
 	chargeHandler := handlers.NewChargeHandler(pool)
+	commentHandler := handlers.NewCommentHandler(pool)
+	dashboardHandler := handlers.NewDashboardHandler(pool)
+	analyticsHandler := handlers.NewAnalyticsHandler(pool)
+	reportsHandler := handlers.NewReportsHandler(pool)
 
 	api := r.Group("/api")
 	{
@@ -68,6 +72,12 @@ func New(pool *pgxpool.Pool, jwtSecret string, jwtExpiryHr int) *gin.Engine {
 			protected.PATCH("/charge-types/:id", chargeHandler.UpdateChargeType)
 			protected.DELETE("/charge-types/:id", chargeHandler.DeleteChargeType)
 
+			protected.GET("/purchase-orders/:id/comments", commentHandler.GetComments)
+			protected.POST("/purchase-orders/:id/comments", commentHandler.AddComment)
+			protected.DELETE("/comments/:id", commentHandler.DeleteComment)
+			protected.GET("/dashboard/overview", dashboardHandler.GetOverview)
+			protected.GET("/analytics/overview", analyticsHandler.GetOverview)
+			protected.GET("/reports/export", reportsHandler.ExportReport)
 		}
 	}
 
