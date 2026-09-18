@@ -4,7 +4,7 @@ use warnings;
 use HTTP::Tiny;
 use JSON::PP;
 
-my $BASE    = "http://localhost:8080/api";
+my $BASE    = "http://localhost:8000/api";
 my $http    = HTTP::Tiny->new;
 my $json    = JSON::PP->new->utf8->canonical;
 my $pass_ct = 0;
@@ -337,7 +337,66 @@ if ($res->{status} == 201) {
 ($res, $data) = req(method => 'DELETE', path => "/charge-types/handling", token => $token);
 log_result("DELETE /charge-types/handling (in use, should 409)", $res->{status} == 409, "status=$res->{status}");
 
+# ---------------------------------------------------------
+# 5d. Comments
+# ---------------------------------------------------------
+($res, $data) = req(path => "/purchase-orders/PO-1001/comments", token => $token);
+log_result("GET /purchase-orders/PO-1001/comments", $res->{status} == 200, "status=$res->{status}");
 
+($res, $data) = req(
+    method => 'POST',
+    path   => "/purchase-orders/PO-1001/comments",
+    token  => $token,
+    body   => { comment_text => "Perl test comment" },
+);
+log_result("POST /purchase-orders/PO-1001/comments", $res->{status} == 201, "status=$res->{status}");
+my $comment_id = $data->{comment_id};
+
+if ($comment_id) {
+    ($res, $data) = req(method => 'DELETE', path => "/comments/$comment_id", token => $token);
+    log_result("DELETE /comments/$comment_id", $res->{status} == 200, "status=$res->{status}");
+}
+
+($res, $data) = req(method => 'DELETE', path => "/comments/999999", token => $token);
+log_result("DELETE /comments/999999 (should 404)", $res->{status} == 404, "status=$res->{status}");
+
+# ---------------------------------------------------------
+# 5e. Attachments
+# ---------------------------------------------------------
+($res, $data) = req(path => "/purchase-orders/PO-1001/attachments", token => $token);
+log_result("GET /purchase-orders/PO-1001/attachments", $res->{status} == 200, "status=$res->{status}");
+
+($res, $data) = req(path => "/attachments/999999", token => $token);
+log_result("GET /attachments/999999 (should 404)", $res->{status} == 404, "status=$res->{status}");
+
+# Note: file upload (multipart/form-data) isn't tested here since HTTP::Tiny
+# needs extra work for multipart bodies — test uploads manually via Postman/curl.
+
+# ---------------------------------------------------------
+# 5f. Dashboard, Analytics, Reports
+# ---------------------------------------------------------
+($res, $data) = req(path => '/dashboard/overview', token => $token);
+log_result("GET /dashboard/overview", $res->{status} == 200, "status=$res->{status}");
+
+($res, $data) = req(path => '/dashboard/overview?vendorId=V001', token => $token);
+log_result("GET /dashboard/overview?vendorId=V001", $res->{status} == 200, "status=$res->{status}");
+
+($res, $data) = req(path => '/analytics/overview', token => $token);
+log_result("GET /analytics/overview", $res->{status} == 200, "status=$res->{status}");
+
+for my $report_type (qw(daily weekly monthly vendor margin gst payment procurement inventory-landing-cost)) {
+    ($res, $data) = req(path => "/reports/export?type=$report_type&format=csv", token => $token);
+    log_result("GET /reports/export?type=$report_type&format=csv", $res->{status} == 200, "status=$res->{status}");
+}
+
+($res, $data) = req(path => "/reports/export?type=vendor&format=pdf", token => $token);
+log_result("GET /reports/export?type=vendor&format=pdf", $res->{status} == 200, "status=$res->{status}");
+
+($res, $data) = req(path => "/reports/export?type=bogus&format=csv", token => $token);
+log_result("GET /reports/export?type=bogus (should 400)", $res->{status} == 400, "status=$res->{status}");
+
+($res, $data) = req(path => "/reports/export", token => $token);
+log_result("GET /reports/export (no type, should 400)", $res->{status} == 400, "status=$res->{status}");
 
 
 # ---------------------------------------------------------

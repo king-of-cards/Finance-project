@@ -28,7 +28,7 @@ func main() {
 	log.Println("connected — starting server...")
 
 	r := router.New(pool, cfg.JWTSecret, cfg.JWTExpiryHours)
-	if err := r.Run(":8080"); err != nil {
+	if err := r.Run(":8000"); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
 }
