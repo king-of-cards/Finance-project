@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,9 +25,19 @@ func (h *DashboardHandler) GetOverview(c *gin.Context) {
 		To:       c.Query("to"),
 	}
 
+	// overview, err := db.GetDashboardOverview(c.Request.Context(), h.Pool, filters)
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch dashboard overview"})
+	// 	return
+	// }
+
 	overview, err := db.GetDashboardOverview(c.Request.Context(), h.Pool, filters)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch dashboard overview"})
+		log.Printf("Dashboard overview error: %v", err)
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to fetch dashboard overview",
+		})
 		return
 	}
 

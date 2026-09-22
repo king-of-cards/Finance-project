@@ -1,15 +1,11 @@
 import { useEffect, useState } from "react";
-import { Plus, Search, Download, Eye, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Download, Check } from "lucide-react";
 import DashboardLayout from "../../layouts/DashboardLayout";
 import StatusBadge from "../../components/StatusBadge";
-import PurchaseOrderDetailModal from "../../components/PurchaseOrderDetailModal";
-import CreatePurchaseOrderModal from "../../components/CreatePurchaseOrderModal";
+import PaymentApprovalDrawer from "../../components/PaymentApprovalDrawer";
 import { getPurchaseOrders, exportPurchaseOrders } from "../../api/purchaseOrderApi";
-import { getVendors } from "../../api/vendorApi";
-import { PO_STATUSES, PO_PAYMENT_STATUSES } from "../../types/purchaseOrder";
+import { PO_STATUSES } from "../../types/purchaseOrder";
 import type { PaginatedPurchaseOrders, PurchaseOrderFilters } from "../../types/purchaseOrder";
-import type { Vendor } from "../../types/vendor";
-import EditPurchaseOrderModal from "../../components/EditPurchaseOrderModal";
 
 const currency = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -19,27 +15,20 @@ const currency = new Intl.NumberFormat("en-IN", {
 });
 
 const LIMIT = 10;
+const STEPS = ["Finance Entry", "Verification", "Admin Review", "Approval", "Payment Ready", "Paid"];
 
-export default function VendorEntries() {
+export default function PaymentApproval() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState("");
-  const [vendorId, setVendorId] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState("");
   const [page, setPage] = useState(1);
 
-  const [vendors, setVendors] = useState<Vendor[]>([]);
   const [data, setData] = useState<PaginatedPurchaseOrders | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [viewingPO, setViewingPO] = useState<string | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingPO, setEditingPO] = useState<string | null>(null);
-
-  useEffect(() => {
-    getVendors().then(setVendors).catch(() => setVendors([]));
-  }, []);
+  const [reviewingPO, setReviewingPO] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -51,13 +40,11 @@ export default function VendorEntries() {
 
   useEffect(() => {
     setPage(1);
-  }, [status, vendorId, paymentStatus]);
+  }, [status]);
 
   useEffect(() => {
     const filters: PurchaseOrderFilters = {
       status: status || undefined,
-      paymentStatus: paymentStatus || undefined,
-      vendorId: vendorId || undefined,
       search: debouncedSearch || undefined,
     };
     setLoading(true);
@@ -66,17 +53,12 @@ export default function VendorEntries() {
       .then(setData)
       .catch((err) => setError(err instanceof Error ? err.message : "Something went wrong"))
       .finally(() => setLoading(false));
-  }, [status, vendorId, paymentStatus, debouncedSearch, page]);
+  }, [status, debouncedSearch, page, refreshKey]);
 
   const handleExport = async () => {
     setExporting(true);
     try {
-      await exportPurchaseOrders({
-        status: status || undefined,
-        paymentStatus: paymentStatus || undefined,
-        vendorId: vendorId || undefined,
-        search: debouncedSearch || undefined,
-      });
+      await exportPurchaseOrders({ status: status || undefined, search: debouncedSearch || undefined });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to export");
     } finally {
@@ -84,25 +66,49 @@ export default function VendorEntries() {
     }
   };
 
+  // Called after Approve / Mark as Paid succeeds, to pull fresh data into this same page/filter.
+  const refetch = () => setRefreshKey((k) => k + 1);
+
   const orders = data?.orders ?? [];
 
   return (
-    <DashboardLayout breadcrumb="Vendor Entries">
+    <DashboardLayout breadcrumb="Payment Approval">
       <div className="p-6">
-        <div className="flex justify-between items-start mb-6">
-          <div>
-            <h1 className="text-2xl font-semibold">Vendor Entries</h1>
-            <p className="text-gray-500 text-sm mt-1">
-              Every procurement record. Order numbers are created internally and can be updated
-              here.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 bg-black text-white text-sm px-4 py-2 rounded-lg hover:bg-gray-800"
-          >
-            <Plus size={16} /> Add Vendor Entry
-          </button>
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold">Payment Approval</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            {data?.total ?? 0} entries awaiting admin review. Open any record to verify margin and
+            approve payment.
+          </p>
+        </div>
+
+        {/* Static workflow legend */}
+        <div className="flex items-center mb-6 border border-gray-200 rounded-xl px-6 py-4">
+          {STEPS.map((step, i) => {
+            const done = i < 2;
+            const active = i === 2;
+            return (
+              <div key={step} className="flex items-center flex-1 last:flex-none">
+                <div className="flex flex-col items-center gap-1">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
+                      done
+                        ? "bg-black text-white"
+                        : active
+                        ? "border-2 border-black text-black"
+                        : "border border-gray-300 text-gray-400"
+                    }`}
+                  >
+                    {done ? <Check size={14} /> : i + 1}
+                  </div>
+                  <span className="text-[11px] text-gray-500 whitespace-nowrap">{step}</span>
+                </div>
+                {i < STEPS.length - 1 && (
+                  <div className={`flex-1 h-px mx-2 mb-5 ${done ? "bg-black" : "bg-gray-200"}`} />
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -130,32 +136,6 @@ export default function VendorEntries() {
               ))}
             </select>
 
-            <select
-              value={vendorId}
-              onChange={(e) => setVendorId(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-3 py-2"
-            >
-              <option value="">Vendor: All</option>
-              {vendors.map((v) => (
-                <option key={v.vendor_id} value={v.vendor_id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={paymentStatus}
-              onChange={(e) => setPaymentStatus(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-3 py-2"
-            >
-              <option value="">Payment: All</option>
-              {PO_PAYMENT_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-
             <button
               onClick={handleExport}
               disabled={exporting}
@@ -175,37 +155,35 @@ export default function VendorEntries() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px] tracking-wide text-gray-400">
-                  <th className="px-4 py-3 font-medium">ORDER NO</th>
-                  <th className="px-4 py-3 font-medium">INVOICE NO</th>
+                  <th className="px-4 py-3 font-medium">PO NUMBER</th>
                   <th className="px-4 py-3 font-medium">VENDOR</th>
-                  <th className="px-4 py-3 font-medium text-right">SKUS</th>
-                  <th className="px-4 py-3 font-medium text-right">TOTAL QTY</th>
-                  <th className="px-4 py-3 font-medium text-right">LANDING COST</th>
-                  <th className="px-4 py-3 font-medium text-right">SELLING</th>
+                  <th className="px-4 py-3 font-medium">INVOICE</th>
+                  <th className="px-4 py-3 font-medium text-right">PAYABLE</th>
                   <th className="px-4 py-3 font-medium text-right">MARGIN</th>
+                  <th className="px-4 py-3 font-medium">DUE DATE</th>
                   <th className="px-4 py-3 font-medium">STATUS</th>
-                  <th className="px-4 py-3 font-medium text-right">ACTIONS</th>
+                  <th className="px-4 py-3 font-medium text-right">ACTION</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-gray-400">
+                    <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
                       Loading…
                     </td>
                   </tr>
                 )}
                 {!loading && error && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-red-600">
+                    <td colSpan={8} className="px-4 py-8 text-center text-red-600">
                       {error}
                     </td>
                   </tr>
                 )}
                 {!loading && !error && orders.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-gray-400">
-                      No purchase orders match these filters.
+                    <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
+                      Nothing here right now.
                     </td>
                   </tr>
                 )}
@@ -213,16 +191,10 @@ export default function VendorEntries() {
                   !error &&
                   orders.map((po) => (
                     <tr key={po.po_number} className="border-t border-gray-100">
-                      <td className="px-4 py-3">
-                        <p className="font-medium">{po.po_number}</p>
-                        <p className="text-xs text-gray-400">{po.customer_order_no}</p>
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{po.invoice_no ?? "—"}</td>
+                      <td className="px-4 py-3 font-medium">{po.po_number}</td>
                       <td className="px-4 py-3">{po.vendor_name}</td>
-                      <td className="px-4 py-3 text-right">{po.sku_count}</td>
-                      <td className="px-4 py-3 text-right">{po.total_qty}</td>
+                      <td className="px-4 py-3 text-gray-600">{po.invoice_no ?? "—"}</td>
                       <td className="px-4 py-3 text-right">{currency.format(po.landing_cost)}</td>
-                      <td className="px-4 py-3 text-right">{currency.format(po.selling_total)}</td>
                       <td
                         className={`px-4 py-3 text-right font-medium ${
                           po.gross_margin_pct < 0 ? "text-red-600" : "text-gray-900"
@@ -230,27 +202,17 @@ export default function VendorEntries() {
                       >
                         {po.gross_margin_pct.toFixed(1)}%
                       </td>
+                      <td className="px-4 py-3 text-gray-600">{po.expected_delivery_date ?? "—"}</td>
                       <td className="px-4 py-3">
                         <StatusBadge status={po.payment_status === "Paid" ? "Paid" : po.status} />
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => setViewingPO(po.po_number)}
-                            className="text-gray-400 hover:text-gray-700"
-                            title="View"
-                          >
-                            <Eye size={15} />
-                          </button>
-                          <button
-                            onClick={() => setEditingPO(po.po_number)}
-                            className="text-gray-400 hover:text-gray-700"
-                            title="Edit"
-                          >
-                            <Pencil size={15} />
-                            
-                          </button>
-                        </div>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => setReviewingPO(po.po_number)}
+                          className="text-sm px-3 py-1.5 rounded-lg bg-black text-white hover:bg-gray-800"
+                        >
+                          Review
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -267,16 +229,16 @@ export default function VendorEntries() {
                 <button
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page <= 1}
-                  className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 disabled:opacity-40"
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 disabled:opacity-40"
                 >
-                  <ChevronLeft size={14} /> Prev
+                  Prev
                 </button>
                 <button
                   onClick={() => setPage((p) => Math.min(data.total_pages, p + 1))}
                   disabled={page >= data.total_pages}
-                  className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 disabled:opacity-40"
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 disabled:opacity-40"
                 >
-                  Next <ChevronRight size={14} />
+                  Next
                 </button>
               </div>
             </div>
@@ -284,22 +246,11 @@ export default function VendorEntries() {
         </div>
       </div>
 
-      {viewingPO && (
-        <PurchaseOrderDetailModal poNumber={viewingPO} onClose={() => setViewingPO(null)} />
-      )}
-
-      {showCreateModal && (
-        <CreatePurchaseOrderModal
-          onClose={() => setShowCreateModal(false)}
-          onCreated={() => setPage(1)}
-        />
-      )}
-
-      {editingPO && (
-        <EditPurchaseOrderModal
-          poNumber={editingPO}
-          onClose={() => setEditingPO(null)}
-          onUpdated={() => setPage(1)}
+      {reviewingPO && (
+        <PaymentApprovalDrawer
+          poNumber={reviewingPO}
+          onClose={() => setReviewingPO(null)}
+          onActionComplete={refetch}
         />
       )}
     </DashboardLayout>

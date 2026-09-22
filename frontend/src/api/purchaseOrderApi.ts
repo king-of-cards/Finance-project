@@ -110,3 +110,32 @@ export async function exportPurchaseOrders(
   link.remove();
   window.URL.revokeObjectURL(url);
 }
+
+export async function approvePurchaseOrder(
+  poNumber: string,
+  verifiedLineItemIds: number[],
+  comment?: string
+): Promise<PurchaseOrderDetail> {
+  return apiJson<PurchaseOrderDetail>(
+    `/purchase-orders/${encodeURIComponent(poNumber)}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify({ verifiedLineItemIds, comment: comment || undefined }),
+    },
+    "Failed to approve payment"
+  );
+}
+
+export async function markPurchaseOrderPaid(
+  poNumber: string,
+  comment?: string
+): Promise<PurchaseOrderDetail> {
+  return apiJson<PurchaseOrderDetail>(
+    `/purchase-orders/${encodeURIComponent(poNumber)}/mark-paid`,
+    {
+      method: "POST",
+      body: JSON.stringify({ comment: comment || undefined }),
+    },
+    "Failed to mark as paid"
+  );
+}

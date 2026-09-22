@@ -388,7 +388,7 @@ func CreatePurchaseOrder(ctx context.Context, pool *pgxpool.Pool, input CreatePu
 	gstAmount := baseTotal * (input.GSTPct / 100)
 	grossAmount := baseTotal + packagingTotal + otherChargesTotal
 	landingCost := grossAmount + gstAmount
-	grossProfit := sellingTotal - landingCost
+	grossProfit := sellingTotal - grossAmount // profit excluding GST
 
 	var grossMarginPct float64
 	if sellingTotal > 0 {
@@ -723,7 +723,7 @@ func recomputePOTotals(ctx context.Context, tx pgx.Tx, poNumber string) error {
 	gstAmount := baseTotal * (gstPct / 100)
 	grossAmount := baseTotal + packagingTotal + otherChargesTotal
 	landingCost := grossAmount + gstAmount
-	grossProfit := sellingTotal - landingCost
+	grossProfit := sellingTotal - grossAmount // profit excluding GST
 
 	var grossMarginPct, landingCostPerUnit, landingPct float64
 	if sellingTotal > 0 {
@@ -775,89 +775,9 @@ func CancelPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poNumber strin
 	}
 
 	return GetPurchaseOrderDetail(ctx, pool, poNumber)
-
 }
 
-func ExportPurchaseOrders(ctx context.Context, pool *pgxpool.Pool, filters PurchaseOrderFilters, w io.Writer) error {
-	selectClause := `SELECT po.po_number, po.customer_order_no, po.vendor_id, v.name,
-		po.status, po.payment_status, po.ordered_date, po.expected_delivery_date,
-		po.invoice_no, po.landing_cost, po.gross_margin_pct, po.total_qty`
-
-	query, args := buildPurchaseOrderQuery(filters, selectClause)
-	query += " ORDER BY po.ordered_date DESC NULLS LAST"
-
-	rows, err := pool.Query(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("querying purchase orders for export: %w", err)
-	}
-
-	defer rows.Close()
-
-	csvWriter := csv.NewWriter(w)
-
-	defer csvWriter.Flush()
-
-	header := []string{
-		"PO Number", "Customer Order No", "Vendor ID", "Vendor Name",
-		"Status", "Payment Status", "Ordered Date", "Expected Delivery Date",
-		"Invoice No", "Landing Cost", "Gross Margin %", "Total Qty",
-	}
-	if err := csvWriter.Write(header); err != nil {
-		return fmt.Errorf("writing CSV header: %w", err)
-	}
-
-	for rows.Next() {
-		var o PurchaseOrder
-		if err := rows.Scan(
-			&o.PONumber, &o.CustomerOrderNo, &o.VendorID, &o.VendorName,
-			&o.Status, &o.PaymentStatus, &o.OrderedDate, &o.ExpectedDeliveryDate,
-			&o.InvoiceNo, &o.LandingCost, &o.GrossMarginPct, &o.TotalQty,
-		); err != nil {
-			return fmt.Errorf("scanning purchase order row for export: %w", err)
-		}
-
-		record := []string{
-			o.PONumber,
-			o.CustomerOrderNo,
-			o.VendorID,
-			o.VendorName,
-			o.Status,
-			o.PaymentStatus,
-			formatDatePtr(o.OrderedDate),
-			formatDatePtr(o.ExpectedDeliveryDate),
-			stringPtrOrEmpty(o.InvoiceNo),
-			fmt.Sprintf("%.2f", o.LandingCost),
-			fmt.Sprintf("%.2f", o.GrossMarginPct),
-			fmt.Sprintf("%d", o.TotalQty),
-		}
-
-		if err := csvWriter.Write(record); err != nil {
-			return fmt.Errorf("writing CSV row: %w", err)
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating purchase order rows for export: %w", err)
-	}
-
-	return nil
-
-}
-
-func formatDatePtr(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-	return t.Format("2006-01-02")
-}
-
-func stringPtrOrEmpty(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-
-}
+// --- Status history ---
 
 type StatusHistoryEntry struct {
 	HistoryID     int64     `json:"history_id"`
@@ -878,6 +798,7 @@ func GetPurchaseOrderStatusHistory(ctx context.Context, pool *pgxpool.Pool, poNu
 	if !exists {
 		return nil, ErrPurchaseOrderNotFound
 	}
+
 	rows, err := pool.Query(ctx, `
 		SELECT h.history_id, h.from_status, h.to_status, h.changed_by, u.name, h.note, h.changed_at
 		FROM finance_order_status_history h
@@ -897,36 +818,38 @@ func GetPurchaseOrderStatusHistory(ctx context.Context, pool *pgxpool.Pool, poNu
 			return nil, fmt.Errorf("scanning status history row: %w", err)
 		}
 		history = append(history, e)
-
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating status history rows: %w", err)
 	}
 
 	return history, nil
-
 }
 
 func getCurrentPOStatus(ctx context.Context, tx pgx.Tx, poNumber string) (string, error) {
 	var status string
 	err := tx.QueryRow(ctx, `SELECT status FROM finance_purchase_orders WHERE po_number = $1`, poNumber).Scan(&status)
-
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrPurchaseOrderNotFound
+	}
 	if err != nil {
-		return "", fmt.Errorf("reading current status :%w", err)
+		return "", fmt.Errorf("reading current status: %w", err)
 	}
 	return status, nil
-
 }
 
 func insertStatusHistory(ctx context.Context, tx pgx.Tx, poNumber, fromStatus, toStatus, changedBy string, note *string) error {
-	_, err := tx.Exec(ctx, `INSERT INTO finance_order_status_history (po_number, from_status, to_status, changed_by, note)
-		VALUES ($1, $2, $3, $4, $5)`, poNumber, fromStatus, toStatus, changedBy, note)
-
+	_, err := tx.Exec(ctx, `
+		INSERT INTO finance_order_status_history (po_number, from_status, to_status, changed_by, note)
+		VALUES ($1, $2, $3, $4, $5)
+	`, poNumber, fromStatus, toStatus, changedBy, note)
 	if err != nil {
 		return fmt.Errorf("inserting status history: %w", err)
 	}
 	return nil
 }
+
+// --- Approve / Reject / Hold / Request Changes / Mark Paid ---
 
 var ErrLineItemsNotFullyVerified = errors.New("all line items must be verified before approval")
 
@@ -1039,6 +962,11 @@ func simpleStatusTransition(ctx context.Context, pool *pgxpool.Pool, poNumber, n
 	return GetPurchaseOrderDetail(ctx, pool, poNumber)
 }
 
+// --- Line items (standalone access) ---
+
+var ErrLineItemNotFound = errors.New("line item not found")
+var ErrCannotDeleteLastLineItem = errors.New("cannot delete the last remaining line item on a purchase order")
+
 func getPONumberForLineItem(ctx context.Context, tx pgx.Tx, lineItemID int64) (string, error) {
 	var poNumber string
 	err := tx.QueryRow(ctx, `SELECT po_number FROM finance_order_line_items WHERE line_item_id = $1`, lineItemID).Scan(&poNumber)
@@ -1050,9 +978,6 @@ func getPONumberForLineItem(ctx context.Context, tx pgx.Tx, lineItemID int64) (s
 	}
 	return poNumber, nil
 }
-
-var ErrLineItemNotFound = errors.New("line item not found")
-var ErrCannotDeleteLastLineItem = errors.New("cannot delete the last remaining line item on a purchase order")
 
 func GetLineItems(ctx context.Context, pool *pgxpool.Pool, poNumber string) ([]LineItemDetail, error) {
 	var exists bool
@@ -1072,7 +997,6 @@ func GetLineItems(ctx context.Context, pool *pgxpool.Pool, poNumber string) ([]L
 }
 
 func AddLineItem(ctx context.Context, pool *pgxpool.Pool, poNumber string, sku CreateSKUInput) (*LineItemDetail, error) {
-
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
@@ -1117,7 +1041,6 @@ func AddLineItem(ctx context.Context, pool *pgxpool.Pool, poNumber string, sku C
 	}
 
 	return getLineItemDetail(ctx, pool, lineItemID)
-
 }
 
 type UpdateLineItemInput struct {
@@ -1270,6 +1193,8 @@ func getLineItemDetail(ctx context.Context, pool *pgxpool.Pool, lineItemID int64
 	return &li, nil
 }
 
+// --- Line item charges ---
+
 func GetLineItemCharges(ctx context.Context, pool *pgxpool.Pool, lineItemID int64) ([]ChargeDetail, error) {
 	var exists bool
 	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM finance_order_line_items WHERE line_item_id = $1)`, lineItemID).Scan(&exists)
@@ -1375,4 +1300,83 @@ func DeleteLineItemCharge(ctx context.Context, pool *pgxpool.Pool, lineItemID, c
 	}
 
 	return nil
+}
+
+// --- CSV export ---
+
+func ExportPurchaseOrders(ctx context.Context, pool *pgxpool.Pool, filters PurchaseOrderFilters, w io.Writer) error {
+	selectClause := `SELECT po.po_number, po.customer_order_no, po.vendor_id, v.name,
+		po.status, po.payment_status, po.ordered_date, po.expected_delivery_date,
+		po.invoice_no, po.landing_cost, po.gross_margin_pct, po.total_qty`
+
+	query, args := buildPurchaseOrderQuery(filters, selectClause)
+	query += " ORDER BY po.ordered_date DESC NULLS LAST"
+
+	rows, err := pool.Query(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("querying purchase orders for export: %w", err)
+	}
+	defer rows.Close()
+
+	csvWriter := csv.NewWriter(w)
+	defer csvWriter.Flush()
+
+	header := []string{
+		"PO Number", "Customer Order No", "Vendor ID", "Vendor Name",
+		"Status", "Payment Status", "Ordered Date", "Expected Delivery Date",
+		"Invoice No", "Landing Cost", "Gross Margin %", "Total Qty",
+	}
+	if err := csvWriter.Write(header); err != nil {
+		return fmt.Errorf("writing CSV header: %w", err)
+	}
+
+	for rows.Next() {
+		var o PurchaseOrder
+		if err := rows.Scan(
+			&o.PONumber, &o.CustomerOrderNo, &o.VendorID, &o.VendorName,
+			&o.Status, &o.PaymentStatus, &o.OrderedDate, &o.ExpectedDeliveryDate,
+			&o.InvoiceNo, &o.LandingCost, &o.GrossMarginPct, &o.TotalQty,
+		); err != nil {
+			return fmt.Errorf("scanning purchase order row for export: %w", err)
+		}
+
+		record := []string{
+			o.PONumber,
+			o.CustomerOrderNo,
+			o.VendorID,
+			o.VendorName,
+			o.Status,
+			o.PaymentStatus,
+			formatDatePtr(o.OrderedDate),
+			formatDatePtr(o.ExpectedDeliveryDate),
+			stringPtrOrEmpty(o.InvoiceNo),
+			fmt.Sprintf("%.2f", o.LandingCost),
+			fmt.Sprintf("%.2f", o.GrossMarginPct),
+			fmt.Sprintf("%d", o.TotalQty),
+		}
+
+		if err := csvWriter.Write(record); err != nil {
+			return fmt.Errorf("writing CSV row: %w", err)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating purchase order rows for export: %w", err)
+	}
+
+	return nil
+}
+
+func formatDatePtr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+func stringPtrOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

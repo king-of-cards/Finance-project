@@ -149,14 +149,26 @@ func GetDashboardOverview(ctx context.Context, pool *pgxpool.Pool, filters Dashb
 		return nil, fmt.Errorf("pending_approval_trend: %w", err)
 	}
 
-	rows, err := pool.Query(ctx, `
+	// rows, err := pool.Query(ctx, `
+	// 	SELECT v.name, COALESCE(SUM(po.landing_cost), 0) AS spend
+	// 	FROM finance_vendors v
+	// 	LEFT JOIN finance_purchase_orders po ON po.vendor_id = v.vendor_id
+	// 	GROUP BY v.name
+	// 	ORDER BY spend DESC
+	// 	LIMIT 10
+	// `)
+
+	vendorSpendArgPos, vendorSpendArgs := 1, []interface{}{}
+	vendorSpendFilter := dashboardJoinFilter(filters, &vendorSpendArgPos, &vendorSpendArgs, "po")
+
+	rows, err := pool.Query(ctx, fmt.Sprintf(`
 		SELECT v.name, COALESCE(SUM(po.landing_cost), 0) AS spend
 		FROM finance_vendors v
-		LEFT JOIN finance_purchase_orders po ON po.vendor_id = v.vendor_id
+		LEFT JOIN finance_purchase_orders po ON po.vendor_id = v.vendor_id %s
 		GROUP BY v.name
 		ORDER BY spend DESC
 		LIMIT 10
-	`)
+	`, vendorSpendFilter), vendorSpendArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("vendor_wise_spend: %w", err)
 	}
@@ -170,14 +182,26 @@ func GetDashboardOverview(ctx context.Context, pool *pgxpool.Pool, filters Dashb
 	}
 	rows.Close()
 
-	rows, err = pool.Query(ctx, `
+	// rows, err = pool.Query(ctx, `
+	// 	SELECT v.name, COALESCE(AVG(po.received_date - po.ordered_date), 0) AS avg_days
+	// 	FROM finance_vendors v
+	// 	LEFT JOIN finance_purchase_orders po ON po.vendor_id = v.vendor_id AND po.received_date IS NOT NULL
+	// 	GROUP BY v.name
+	// 	ORDER BY avg_days ASC
+	// 	LIMIT 10
+	// `)
+
+	vendorPerfArgPos, vendorPerfArgs := 1, []interface{}{}
+	vendorPerfFilter := dashboardJoinFilter(filters, &vendorPerfArgPos, &vendorPerfArgs, "po")
+
+	rows, err = pool.Query(ctx, fmt.Sprintf(`
 		SELECT v.name, COALESCE(AVG(po.received_date - po.ordered_date), 0) AS avg_days
 		FROM finance_vendors v
-		LEFT JOIN finance_purchase_orders po ON po.vendor_id = v.vendor_id AND po.received_date IS NOT NULL
+		LEFT JOIN finance_purchase_orders po ON po.vendor_id = v.vendor_id AND po.received_date IS NOT NULL %s
 		GROUP BY v.name
 		ORDER BY avg_days ASC
 		LIMIT 10
-	`)
+	`, vendorPerfFilter), vendorPerfArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("vendor_performance: %w", err)
 	}
@@ -257,7 +281,40 @@ func GetDashboardOverview(ctx context.Context, pool *pgxpool.Pool, filters Dashb
 	return &d, nil
 }
 
+// func fetchChartByMonth(ctx context.Context, pool *pgxpool.Pool, aggExpr, whereClause string, args []interface{}) ([]ChartPoint, error) {
+// 	query := fmt.Sprintf(`
+// 		SELECT TO_CHAR(ordered_date, 'YYYY-MM') AS month, COALESCE(%s, 0)
+// 		FROM finance_purchase_orders
+// 		%s
+// 		GROUP BY month
+// 		ORDER BY month
+// 	`, aggExpr, whereClause)
+
+// 	rows, err := pool.Query(ctx, query, args...)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer rows.Close()
+
+// 	var points []ChartPoint
+// 	for rows.Next() {
+// 		var cp ChartPoint
+// 		if err := rows.Scan(&cp.Label, &cp.Value); err != nil {
+// 			return nil, err
+// 		}
+// 		points = append(points, cp)
+// 	}
+// 	return points, rows.Err()
+// }
+
 func fetchChartByMonth(ctx context.Context, pool *pgxpool.Pool, aggExpr, whereClause string, args []interface{}) ([]ChartPoint, error) {
+	nullGuard := "ordered_date IS NOT NULL"
+	if whereClause == "" {
+		whereClause = " WHERE " + nullGuard
+	} else {
+		whereClause += " AND " + nullGuard
+	}
+
 	query := fmt.Sprintf(`
 		SELECT TO_CHAR(ordered_date, 'YYYY-MM') AS month, COALESCE(%s, 0)
 		FROM finance_purchase_orders
@@ -281,4 +338,34 @@ func fetchChartByMonth(ctx context.Context, pool *pgxpool.Pool, aggExpr, whereCl
 		points = append(points, cp)
 	}
 	return points, rows.Err()
+}
+
+func dashboardJoinFilter(filters DashboardFilters, argPos *int, args *[]interface{}, alias string) string {
+	var clauses []string
+	if filters.VendorID != "" {
+		clauses = append(clauses, fmt.Sprintf("%s.vendor_id = $%d", alias, *argPos))
+		*args = append(*args, filters.VendorID)
+		*argPos++
+	}
+	if filters.From != "" {
+		clauses = append(clauses, fmt.Sprintf("%s.ordered_date >= $%d", alias, *argPos))
+		*args = append(*args, filters.From)
+		*argPos++
+	}
+	if filters.To != "" {
+		clauses = append(clauses, fmt.Sprintf("%s.ordered_date <= $%d", alias, *argPos))
+		*args = append(*args, filters.To)
+		*argPos++
+	}
+	if len(clauses) == 0 {
+		return ""
+	}
+	out := " AND "
+	for i, c := range clauses {
+		if i > 0 {
+			out += " AND "
+		}
+		out += c
+	}
+	return out
 }

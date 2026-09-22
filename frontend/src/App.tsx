@@ -4,6 +4,9 @@ import Dashboard from "./pages/Dashboard/Dashboard";
 import Vendors from "./pages/Vendors/Vendors";
 import VendorEntries from "./pages/VendorEntries/VendorEntries";
 import ProtectedRoute from "./components/ProtectedRoute";
+import PaymentApproval from "./pages/PaymentApproval/PaymentApproval";
+import Analytics from "./pages/Analytics/Analytics";
+import Reports from "./pages/Reports/Reports";
 
 function App() {
   return (
@@ -15,10 +18,10 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/vendor-entries" element={<VendorEntries />} />
           {/* TODO: replace with real pages as they're built */}
-          <Route path="/payment-approval" element={<Dashboard />} />
+          <Route path="/payment-approval" element={<PaymentApproval />} />
           <Route path="/vendors" element={<Vendors />} />
-          <Route path="/reports" element={<Dashboard />} />
-          <Route path="/analytics" element={<Dashboard />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/analytics" element={<Analytics />} />
           <Route path="/settings" element={<Dashboard />} />
         </Route>
 
